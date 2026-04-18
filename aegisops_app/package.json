@@ -8,7 +8,7 @@
     "server": "node server/standalone.js",
     "server:lan": "cross-env BIND=0.0.0.0 node server/standalone.js",
     "server:public": "cross-env BIND=0.0.0.0 AEGISOPS_TUNNEL=cloudflared node server/standalone.js",
-    "test": "jest --runInBand",
+    "test": "jest --runInBand --forceExit",
     "lint": "eslint server public/js --ext .js",
     "build:win": "electron-builder --win --publish never",
     "build:linux": "electron-builder --linux --publish never",

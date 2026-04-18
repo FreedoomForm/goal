@@ -1,7 +1,12 @@
 const {
   rateLimiter, securityHeaders, inputSanitizer,
-  redactSecrets, sanitize, safeEqual,
+  redactSecrets, sanitize, safeEqual, stopCleanup,
 } = require('../server/middleware/security');
+
+afterAll(() => {
+  // Stop the background setInterval in security.js so Jest can exit cleanly
+  stopCleanup();
+});
 
 describe('security middleware', () => {
   describe('sanitize', () => {

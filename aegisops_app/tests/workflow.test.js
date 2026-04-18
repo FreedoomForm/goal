@@ -6,6 +6,7 @@ jest.mock('../server/db', () => ({
   queryAll: jest.fn(() => []),
   runSQL: jest.fn(() => ({ lastInsertRowid: 1 })),
   nowISO: () => '2026-01-01T00:00:00Z',
+  flushDB: jest.fn(),
 }));
 
 jest.mock('../server/connectors', () => ({
@@ -22,8 +23,13 @@ jest.mock('../server/mcp/client', () => ({
 
 const engine = require('../server/workflow/engine');
 const db = require('../server/db');
+const { stopCleanup } = require('../server/middleware/security');
 
 beforeEach(() => jest.clearAllMocks());
+
+afterAll(() => {
+  stopCleanup();
+});
 
 test('catalog returns groups with items', () => {
   const cat = engine.nodeCatalog();

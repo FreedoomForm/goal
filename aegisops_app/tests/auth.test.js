@@ -15,10 +15,16 @@ jest.mock('../server/db', () => {
       return { lastInsertRowid: 1 };
     }),
     nowISO: () => '2026-01-01T00:00:00Z',
+    flushDB: jest.fn(),
   };
 });
 
 const { signToken, verifyToken } = require('../server/auth');
+const { stopCleanup } = require('../server/middleware/security');
+
+afterAll(() => {
+  stopCleanup();
+});
 
 test('signs and verifies a token', () => {
   const t = signToken({ sub: 'u1', scopes: ['read'] }, 60);

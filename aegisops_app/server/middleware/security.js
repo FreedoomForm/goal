@@ -11,12 +11,22 @@ const RATE_WINDOW_MS = 60 * 1000;
 const RATE_MAX_REQUESTS = 120; // 120 req/min per IP per route group
 
 // Cleanup expired rate limit entries every 5 minutes to prevent memory leak
-setInterval(() => {
+// Store the timer ID so it can be cleared (e.g. in tests) to allow Jest to exit.
+let _cleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of rateStore) {
     if (now > entry.reset) rateStore.delete(key);
   }
 }, 5 * 60 * 1000);
+
+// Allow external code (e.g. test teardown) to stop the background timer
+// so that Jest / the Node process can exit cleanly.
+function stopCleanup() {
+  if (_cleanupTimer) {
+    clearInterval(_cleanupTimer);
+    _cleanupTimer = null;
+  }
+}
 
 function rateLimiter(opts = {}) {
   const max = opts.max || RATE_MAX_REQUESTS;
@@ -136,4 +146,5 @@ module.exports = {
   payloadGuard,
   safeEqual,
   sanitize,
+  stopCleanup,
 };

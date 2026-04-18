@@ -37,6 +37,16 @@ function saveDBDebounced() {
   }, 2000); // Save at most once every 2 seconds
 }
 
+// Flush any pending debounced save and clear the timer.
+// Call this in test teardown so Jest can exit cleanly.
+function flushDB() {
+  if (_saveTimer) {
+    clearTimeout(_saveTimer);
+    saveDB();
+    _saveTimer = null;
+  }
+}
+
 function nowISO() {
   return new Date().toISOString().replace('T', ' ').slice(0, 19);
 }
@@ -285,4 +295,4 @@ function seedData() {
   console.log('[AegisOps DB] Seeded with data');
 }
 
-module.exports = { initDB, getDB, queryAll, queryOne, runSQL, saveDB, saveDBDebounced, nowISO };
+module.exports = { initDB, getDB, queryAll, queryOne, runSQL, saveDB, saveDBDebounced, flushDB, nowISO };
