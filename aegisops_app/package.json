@@ -15,7 +15,8 @@
     "build:mac": "electron-builder --mac --publish never",
     "postinstall": "electron-builder install-app-deps || true"
   },
-  "author": "AegisOps Team",
+  "author": "AegisOps Team <support@aegisops.com>",
+  "homepage": "https://github.com/FreedoomForm/goal",
   "license": "MIT",
   "dependencies": {
     "cors": "^2.8.5",
