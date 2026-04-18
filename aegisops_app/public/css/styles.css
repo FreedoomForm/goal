@@ -1090,3 +1090,401 @@ tbody tr:last-child td {
 .text-sm { font-size: 13px; }
 .font-mono { font-family: 'JetBrains Mono', 'Fira Code', monospace; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── Streaming cursor blink ── */
+.cursor-blink {
+  animation: cursorBlink 0.8s step-end infinite;
+  color: var(--accent-blue);
+  font-weight: 600;
+}
+@keyframes cursorBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   Guide Page — Connectors Documentation
+   ══════════════════════════════════════════════════════════════ */
+
+/* ── Guide Tabs ── */
+.guide-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+}
+.guide-tab {
+  padding: 10px 18px;
+  border-radius: var(--radius-sm);
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all var(--duration) var(--ease);
+  white-space: nowrap;
+}
+.guide-tab:hover {
+  background: rgba(255,255,255,0.04);
+  color: var(--text-primary);
+}
+.guide-tab.active {
+  background: var(--accent-gradient);
+  color: white;
+  box-shadow: 0 2px 12px rgba(89,168,255,0.25);
+}
+
+/* ── Guide Tab Content ── */
+.guide-tab-content {
+  display: none;
+}
+.guide-tab-content.active {
+  display: block;
+  animation: fadeIn 0.3s var(--ease);
+}
+
+/* ── Connector Cards Grid ── */
+.guide-connector-grid {
+  display: grid;
+  gap: 12px;
+}
+.guide-connector-card {
+  background: rgba(17, 27, 46, 0.6);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  transition: all var(--duration) var(--ease);
+}
+.guide-connector-card:hover {
+  border-color: var(--border-strong);
+}
+.guide-connector-card.expanded {
+  border-color: rgba(89,168,255,0.3);
+  box-shadow: var(--shadow-glow-blue);
+}
+
+.guide-connector-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  cursor: pointer;
+  transition: background var(--duration) var(--ease);
+}
+.guide-connector-header:hover {
+  background: rgba(255,255,255,0.03);
+}
+
+.guide-chevron {
+  transition: transform var(--duration) var(--ease);
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+.guide-connector-card.expanded .guide-chevron {
+  transform: rotate(180deg);
+  color: var(--accent-blue);
+}
+
+.guide-connector-body {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.4s var(--ease);
+  padding: 0 20px;
+}
+.guide-connector-body.open {
+  padding: 0 20px 20px;
+}
+
+/* ── Guide Section Labels ── */
+.guide-section-label {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--accent-blue);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 16px 0 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+/* ── Guide Lists ── */
+.guide-task-list,
+.guide-prereq-list {
+  padding-left: 20px;
+  font-size: 13.5px;
+  line-height: 1.8;
+  color: var(--text-secondary);
+}
+.guide-task-list li::marker {
+  color: var(--success);
+}
+.guide-prereq-list li::marker {
+  color: var(--warning);
+}
+
+.guide-setup-list {
+  padding-left: 20px;
+  font-size: 13.5px;
+  line-height: 1.8;
+  color: var(--text-primary);
+}
+.guide-setup-list li::marker {
+  color: var(--accent-blue);
+  font-weight: 700;
+}
+
+/* ── Guide Methods ── */
+.guide-methods {
+  display: grid;
+  gap: 6px;
+}
+.guide-method {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 12px;
+  background: rgba(255,255,255,0.02);
+  border-radius: 8px;
+  font-size: 13px;
+}
+.guide-method code {
+  color: var(--accent-cyan);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.guide-method span {
+  color: var(--text-secondary);
+}
+
+/* ── Guide Code ── */
+.guide-code {
+  background: var(--bg-deep);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 16px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 12.5px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-secondary);
+  overflow-x: auto;
+}
+.guide-code-group {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 12px 0;
+}
+.guide-code-item {}
+.guide-code-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+  color: var(--text-tertiary);
+}
+
+/* ── Guide Architecture Diagram ── */
+.guide-diagram {
+  background: var(--bg-deep);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 20px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow-x: auto;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+
+/* ── Guide Steps (Horizontal) ── */
+.guide-steps {
+  display: grid;
+  gap: 16px;
+}
+.guide-step {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.guide-step-num {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--accent-gradient);
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 14px;
+  color: white;
+  flex-shrink: 0;
+}
+.guide-step-content {
+  flex: 1;
+}
+.guide-step-content strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-primary);
+}
+.guide-step-content p {
+  font-size: 13.5px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+/* ── Guide Steps Vertical ── */
+.guide-steps-vertical {
+  display: grid;
+  gap: 0;
+  position: relative;
+}
+.guide-steps-vertical::before {
+  content: '';
+  position: absolute;
+  left: 22px;
+  top: 40px;
+  bottom: 20px;
+  width: 2px;
+  background: var(--border-default);
+}
+.guide-step-v {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  position: relative;
+  padding-bottom: 28px;
+}
+.guide-step-v-num {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 16px;
+  color: white;
+  flex-shrink: 0;
+  z-index: 1;
+}
+.guide-step-v-content {
+  flex: 1;
+  padding-top: 8px;
+}
+.guide-step-v-title {
+  font-size: 17px;
+  font-weight: 700;
+  margin-bottom: 6px;
+  color: var(--text-primary);
+}
+.guide-step-v-desc {
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+/* ── Guide Type Table ── */
+.guide-type-table table {
+  font-size: 13px;
+}
+.guide-type-table th {
+  font-size: 11.5px;
+  color: var(--accent-blue);
+}
+.guide-type-table td {
+  padding: 10px 14px;
+}
+.guide-type-table code {
+  color: var(--accent-cyan);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 12px;
+}
+
+/* ── Guide FAQ ── */
+.guide-faq-list {
+  display: grid;
+  gap: 8px;
+}
+.guide-faq-item {
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  transition: all var(--duration) var(--ease);
+}
+.guide-faq-item.expanded {
+  border-color: rgba(89,168,255,0.2);
+  background: rgba(255,255,255,0.04);
+}
+.guide-faq-q {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  gap: 12px;
+  transition: color var(--duration) var(--ease);
+}
+.guide-faq-q:hover {
+  color: var(--accent-blue);
+}
+.guide-faq-item.expanded .guide-faq-q {
+  color: var(--accent-blue);
+}
+.guide-faq-a {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.3s var(--ease);
+  padding: 0 18px;
+}
+.guide-faq-a.open {
+  padding: 0 18px 16px;
+}
+.guide-faq-a p {
+  font-size: 13.5px;
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+
+/* ── Guide Section Body ── */
+.guide-section-body p {
+  margin-bottom: 12px;
+}
+.guide-section-body code {
+  color: var(--accent-cyan);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 12.5px;
+  background: rgba(0,212,255,0.08);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.guide-section-body ul {
+  padding-left: 20px;
+}
+.guide-section-body li {
+  margin-bottom: 6px;
+}
+
+/* ── Guide responsive ── */
+@media (max-width: 1100px) {
+  .guide-code-group {
+    grid-template-columns: 1fr;
+  }
+  .guide-type-table {
+    overflow-x: auto;
+  }
+}

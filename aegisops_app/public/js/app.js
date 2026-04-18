@@ -126,10 +126,13 @@ async function renderPage(page) {
       case 'connectors': await renderConnectors(container); break;
       case 'scenarios': await renderScenarios(container); break;
       case 'modules': await renderModules(container); break;
-      case 'assistant': await renderAssistant(container); break;
+      case 'assistant': await renderAssistantEnhanced(container); break;
+      case 'ai-engine': await renderAIEngine(container); break;
+      case 'assistant': await renderAssistantEnhanced(container); break;
       case 'documents': await renderDocuments(container); break;
       case 'training': await renderTraining(container); break;
       case 'etl': await renderETL(container); break;
+      case 'guide': await window.renderGuidePage(container); break;
       case 'audit': await renderAudit(container); break;
       case 'settings': await renderSettings(container); break;
       case 'planning': await window.renderPlanningPage(container); break;
