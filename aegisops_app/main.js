@@ -1,6 +1,7 @@
 const { app, BrowserWindow, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { startServer } = require('./server/index');
 
 const EXPRESS_PORT = 18090;
 
