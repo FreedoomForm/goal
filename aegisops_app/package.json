@@ -69,7 +69,10 @@
       "createStartMenuShortcut": true
     },
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": [
+        { "target": "AppImage", "arch": ["x64"] },
+        { "target": "deb", "arch": ["x64"] }
+      ],
       "category": "Development;Office;Utility",
       "icon": "assets/icon.png",
       "artifactName": "AegisOps-LocalAI-${version}-${arch}.${ext}",
@@ -78,10 +81,10 @@
         "Comment": "Enterprise AI Integration Platform for gas balance forecasting",
         "Categories": "Development;Office;Utility",
         "Keywords": "AI;enterprise;SCADA;OPC;UA;gas;forecasting"
-      },
-      "deb": {
-        "depends": ["libglib2.0-0", "libsecret-1-0", "libx11-6"]
       }
+    },
+    "deb": {
+      "depends": ["libglib2.0-0", "libsecret-1-0", "libx11-6"]
     },
     "mac": {
       "target": "dmg",
