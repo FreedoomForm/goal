@@ -1,6 +1,6 @@
 const { app, BrowserWindow, Menu } = require('electron');
 const path = require('path');
-const { startServer } = require('./server/index');
+const fs = require('fs');
 
 const EXPRESS_PORT = 18090;
 
@@ -8,6 +8,13 @@ let mainWindow;
 let serverInstance;
 
 app.disableHardwareAcceleration(); // For compatibility in some environments
+
+// Resolve writable data directory outside the ASAR archive.
+// In packaged apps __dirname points inside app.asar (read-only),
+// so we must use Electron's userData path for any writable directories.
+function getUserDataDir() {
+  return app.getPath('userData');
+}
 
 async function createWindow() {
   mainWindow = new BrowserWindow({
@@ -30,7 +37,7 @@ async function createWindow() {
 
   try {
     console.log('[Electron] Starting internal Express server...');
-    serverInstance = await startServer(EXPRESS_PORT);
+    serverInstance = await startServer(EXPRESS_PORT, { dataDir: getUserDataDir() });
     console.log(`[Electron] Internal server running on port ${EXPRESS_PORT}`);
 
     // Load URL from local express

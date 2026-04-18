@@ -6,8 +6,11 @@ const initSqlJs = require('sql.js');
 const path = require('path');
 const fs = require('fs');
 
-const DB_DIR = path.join(__dirname, '..', 'data');
-const DB_PATH = path.join(DB_DIR, 'aegisops.db');
+const DB_DIR_DEFAULT = path.join(__dirname, '..', 'data');
+const DB_PATH_DEFAULT = path.join(DB_DIR_DEFAULT, 'aegisops.db');
+
+let dbDir = DB_DIR_DEFAULT;
+let dbPath = DB_PATH_DEFAULT;
 
 let db = null;
 let SQL = null;
@@ -21,21 +24,28 @@ function saveDB() {
   if (!db) return;
   const data = db.export();
   const buffer = Buffer.from(data);
-  fs.writeFileSync(DB_PATH, buffer);
+  fs.writeFileSync(dbPath, buffer);
 }
 
 function nowISO() {
   return new Date().toISOString().replace('T', ' ').slice(0, 19);
 }
 
-async function initDB() {
-  if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true });
+async function initDB(customDir) {
+  // Allow overriding the DB directory (needed for packaged Electron apps
+  // where __dirname points inside read-only ASAR archive).
+  if (customDir) {
+    dbDir = customDir;
+    dbPath = path.join(dbDir, 'aegisops.db');
+  }
+
+  if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
 
   SQL = await initSqlJs();
 
   // Load existing DB or create new one
-  if (fs.existsSync(DB_PATH)) {
-    const fileBuffer = fs.readFileSync(DB_PATH);
+  if (fs.existsSync(dbPath)) {
+    const fileBuffer = fs.readFileSync(dbPath);
     db = new SQL.Database(fileBuffer);
   } else {
     db = new SQL.Database();
@@ -167,7 +177,7 @@ async function initDB() {
   }
 
   saveDB();
-  console.log('[AegisOps DB] Initialized at', DB_PATH);
+  console.log('[AegisOps DB] Initialized at', dbPath);
 }
 
 /** Helper: run query and return rows as objects */

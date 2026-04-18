@@ -21,8 +21,9 @@ const workflowRoutes = require('./routes/workflows');
 const { router: mcpRoutes, autoStartPersisted: autoStartMcp } = require('./routes/mcp');
 const tunnel = require('./tunnel');
 
-const REPORTS_DIR = path.join(__dirname, '..', 'generated_reports');
-if (!fs.existsSync(REPORTS_DIR)) fs.mkdirSync(REPORTS_DIR, { recursive: true });
+const REPORTS_DIR_DEFAULT = path.join(__dirname, '..', 'generated_reports');
+let REPORTS_DIR = REPORTS_DIR_DEFAULT;
+let DATA_DIR = path.join(__dirname, '..', 'data');
 
 function uid() { return uuidv4().replace(/-/g, '').slice(0, 12); }
 
@@ -452,8 +453,19 @@ function createApp() {
 }
 
 /* ────────── Start server ────────── */
-async function startServer(port = 18090, { bind = '127.0.0.1' } = {}) {
-  await initDB();
+async function startServer(port = 18090, { bind = '127.0.0.1', dataDir } = {}) {
+  // Use Electron's userData directory if provided (avoids ENOTDIR inside ASAR),
+  // otherwise fall back to relative paths (development / standalone mode).
+  if (dataDir) {
+    DATA_DIR = path.join(dataDir, 'data');
+    REPORTS_DIR = path.join(dataDir, 'generated_reports');
+  }
+
+  // Ensure writable directories exist
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+  if (!fs.existsSync(REPORTS_DIR)) fs.mkdirSync(REPORTS_DIR, { recursive: true });
+
+  await initDB(DATA_DIR);
   const app = createApp();
   // Auto-start persisted MCP servers in background (do not block listen)
   autoStartMcp().catch(err => log.warn('mcp.autostart_error', { err: err.message }));
@@ -461,7 +473,7 @@ async function startServer(port = 18090, { bind = '127.0.0.1' } = {}) {
   return new Promise((resolve, reject) => {
     const server = http.createServer(app);
     server.listen(port, bind, () => {
-      log.info('server.listening', { url: `http://${bind}:${port}`, bind, port });
+      log.info('server.listening', { url: `http://${bind}:${port}`, bind, port, dataDir: DATA_DIR });
       resolve(server);
     });
     server.on('error', reject);
