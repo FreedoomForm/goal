@@ -87,29 +87,25 @@ async function renderAIEngine(container) {
             <div class="card-title">🧩 OpenClaw — AI Агент (MCP)</div>
             <div class="card-subtitle">AI-агент платформа с инструментами (filesystem, github, shell, postgres)</div>
           </div>
-          <div class="item-actions">
-            ${openclawRunning
-              ? '<button class="btn btn-sm btn-danger" id="btnStopOpenclaw">⏹ Остановить</button>'
-              : '<button class="btn btn-sm btn-primary" id="btnStartOpenclaw">▶ Запустить</button>'
-            }
-            ${!openclawInstalled ? '<button class="btn btn-sm btn-primary" id="btnInstallOpenclaw">📥 Установить</button>' : ''}
-          </div>
+          <span class="badge badge-warning" style="font-size:13px;padding:6px 14px">🔒 Скоро</span>
         </div>
         <div class="item-list mt-16">
           <div class="item-row">
             <div class="item-info">
               <div class="item-name">Статус</div>
               <div class="item-meta">
-                <span class="badge ${openclawRunning ? 'badge-success' : 'badge-danger'}">${openclawRunning ? 'Онлайн' : 'Оффлайн'}</span>
+                <span class="badge badge-neutral">Скоро будет доступен</span>
               </div>
             </div>
           </div>
           <div class="item-row">
             <div class="item-info">
               <div class="item-name">Авто-конфигурация</div>
-              <div class="item-meta"><span>OpenClaw автоматически использует Ollama API</span></div>
+              <div class="item-meta"><span>OpenClaw будет автоматически использовать Ollama API</span></div>
             </div>
-            <button class="btn btn-sm" id="btnConfigureOpenclaw">⚙ Настроить</button>
+          </div>
+          <div style="padding:16px;background:#1a2540;border-radius:12px;text-align:center;color:#8ea1c9;font-size:14px">
+            🚧 Раздел OpenClaw находится в разработке. Запуск, остановка и настройка будут доступны в следующем обновлении.
           </div>
         </div>
       </div>
@@ -262,46 +258,7 @@ async function renderAIEngine(container) {
     }
   });
 
-  $('btnStartOpenclaw')?.addEventListener('click', async () => {
-    try {
-      const result = await api('/api/ai/openclaw/start', { method: 'POST' });
-      showToast(`OpenClaw: ${result.status}`, 'success');
-      await renderAIEngine(container);
-    } catch (err) {
-      showToast('Ошибка: ' + err.message, 'error');
-    }
-  });
-
-  $('btnStopOpenclaw')?.addEventListener('click', async () => {
-    try {
-      await api('/api/ai/openclaw/stop', { method: 'POST' });
-      showToast('OpenClaw остановлен', 'info');
-      await renderAIEngine(container);
-    } catch (err) {
-      showToast('Ошибка: ' + err.message, 'error');
-    }
-  });
-
-  $('btnInstallOpenclaw')?.addEventListener('click', async () => {
-    $('btnInstallOpenclaw').disabled = true;
-    $('btnInstallOpenclaw').textContent = '⏳ Установка...';
-    try {
-      await api('/api/ai/openclaw/install', { method: 'POST' });
-      showToast('OpenClaw установлен!', 'success');
-      await renderAIEngine(container);
-    } catch (err) {
-      showToast('Ошибка установки: ' + err.message, 'error');
-    }
-  });
-
-  $('btnConfigureOpenclaw')?.addEventListener('click', async () => {
-    try {
-      const result = await api('/api/ai/openclaw/configure', { method: 'POST' });
-      showToast(`OpenClaw настроен! Модель: ${result.config?.defaultModel || 'ok'}`, 'success');
-    } catch (err) {
-      showToast('Ошибка: ' + err.message, 'error');
-    }
-  });
+  // OpenClaw buttons removed — Coming Soon
 
   $('btnSelectModel')?.addEventListener('click', async () => {
     const model = $('activeModelSelect')?.value;

@@ -392,6 +392,16 @@ function createApp() {
     res.download(row.path);
   });
 
+  app.delete('/api/documents/:id', (req, res) => {
+    const row = queryOne('SELECT * FROM documents WHERE id = ?', [req.params.id]);
+    if (row && row.path && fs.existsSync(row.path)) {
+      try { fs.unlinkSync(row.path); } catch {}
+    }
+    runSQL('DELETE FROM documents WHERE id = ?', [req.params.id]);
+    logEvent('document.deleted', { id: req.params.id });
+    res.json({ ok: true });
+  });
+
   /* ── AI Assistant (real Ollama) ── */
   app.post('/api/assistant', async (req, res) => {
     const { prompt, model } = req.body;
@@ -811,6 +821,12 @@ function createApp() {
     res.json(queryOne('SELECT * FROM training_jobs WHERE id = ?', [result.lastInsertRowid]));
   });
 
+  app.delete('/api/training/:id', (req, res) => {
+    runSQL('DELETE FROM training_jobs WHERE id = ?', [req.params.id]);
+    logEvent('training.deleted', { id: req.params.id });
+    res.json({ ok: true });
+  });
+
   /* ── ETL Pipelines ── */
   app.get('/api/etl', (req, res) => res.json(queryAll('SELECT * FROM etl_pipelines ORDER BY id DESC')));
   app.post('/api/etl', (req, res) => {
@@ -819,6 +835,12 @@ function createApp() {
       [name, source_connector_id || null, target || 'local_db', schedule || '', JSON.stringify(config || {}), nowISO()]);
     logEvent('etl.created', { id: result.lastInsertRowid, name });
     res.json(queryOne('SELECT * FROM etl_pipelines WHERE id = ?', [result.lastInsertRowid]));
+  });
+
+  app.delete('/api/etl/:id', (req, res) => {
+    runSQL('DELETE FROM etl_pipelines WHERE id = ?', [req.params.id]);
+    logEvent('etl.deleted', { id: req.params.id });
+    res.json({ ok: true });
   });
 
   /* ── Audit ── */

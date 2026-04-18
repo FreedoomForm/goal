@@ -380,6 +380,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _runScenario(dynamic id) async {
     if (id == null) return;
+    final ok = await showDialog<bool>(context: context, builder: (_) => AlertDialog(
+      title: const Text('Запустить сценарий?'),
+      content: const Text('Сценарий будет выполнен с использованием AI. Это может занять некоторое время.'),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('Запустить'),
+        ),
+      ],
+    ));
+    if (ok != true) return;
     ScaffoldMessenger.of(context).removeCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
       content: Row(children: [

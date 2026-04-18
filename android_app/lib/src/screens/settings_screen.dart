@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
+import '../services/api_client.dart';
 import '../services/settings_service.dart';
 import '../theme.dart';
 
@@ -12,6 +13,75 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _showKey = false;
+  bool _serverOnline = false;
+  bool _checkingServer = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkServer();
+  }
+
+  Future<void> _checkServer() async {
+    setState(() { _checkingServer = true; });
+    try {
+      final result = await ApiClient.instance.getJson('/api/health');
+      setState(() { _serverOnline = result is Map && result['status'] == 'ok'; _checkingServer = false; });
+    } catch (_) {
+      setState(() { _serverOnline = false; _checkingServer = false; });
+    }
+  }
+
+  Widget _buildServerStatus() {
+    if (_checkingServer) {
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AegisColors.accentBlue.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AegisColors.accentBlue.withOpacity(0.25)),
+        ),
+        child: Row(children: [
+          SizedBox(width: 10, height: 10, child: CircularProgressIndicator(strokeWidth: 2, color: AegisColors.accentBlue)),
+          const SizedBox(width: 12),
+          const Expanded(child: Text('Проверка подключения...',
+              style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: AegisColors.accentBlue, fontFamily: 'Inter'))),
+        ]),
+      );
+    }
+    if (_serverOnline) {
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AegisColors.success.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AegisColors.success.withOpacity(0.25)),
+        ),
+        child: Row(children: [
+          const PulseDot(color: AegisColors.success, size: 10),
+          const SizedBox(width: 12),
+          const Expanded(child: Text('Подключено к серверу',
+              style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: AegisColors.success, fontFamily: 'Inter'))),
+          const Icon(Icons.check_circle_rounded, color: AegisColors.success, size: 18),
+        ]),
+      );
+    }
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AegisColors.danger.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AegisColors.danger.withOpacity(0.25)),
+      ),
+      child: Row(children: [
+        const Icon(Icons.cancel_rounded, color: AegisColors.danger, size: 10),
+        const SizedBox(width: 12),
+        const Expanded(child: Text('Сервер недоступен',
+            style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: AegisColors.danger, fontFamily: 'Inter'))),
+        IconButton(icon: const Icon(Icons.refresh_rounded, size: 18, color: AegisColors.danger), onPressed: _checkServer, tooltip: 'Повторить'),
+      ]),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -57,21 +127,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 22),
           _sectionTitle('СТАТУС'),
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: AegisColors.success.withOpacity(0.08),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AegisColors.success.withOpacity(0.25)),
-            ),
-            child: Row(children: [
-              const PulseDot(color: AegisColors.success, size: 10),
-              const SizedBox(width: 12),
-              const Expanded(child: Text('Подключено к серверу',
-                  style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: AegisColors.success, fontFamily: 'Inter'))),
-              const Icon(Icons.check_circle_rounded, color: AegisColors.success, size: 18),
-            ]),
-          ),
+          _buildServerStatus(),
           const SizedBox(height: 22),
           _sectionTitle('ДЕЙСТВИЯ'),
           Container(

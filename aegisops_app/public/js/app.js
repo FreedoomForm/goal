@@ -245,7 +245,7 @@ async function renderDashboard(container) {
         </div>
         <div class="item-list">
           ${data.modules.slice(0, 5).map(m => `
-            <div class="item-row">
+            <div class="item-row" style="cursor:pointer" onclick="navigateTo('modules')">
               <span style="font-size:24px;flex-shrink:0">${m.icon}</span>
               <div class="item-info">
                 <div class="item-name">${escapeHtml(m.name)}</div>
@@ -266,7 +266,7 @@ async function renderDashboard(container) {
         </div>
         <div class="item-list">
           ${data.connectors.slice(0, 6).map(c => `
-            <div class="item-row">
+            <div class="item-row" style="cursor:pointer" onclick="navigateTo('connectors')">
               <div class="connector-type-icon ${c.type}">${typeIcons[c.type] || '🔌'}</div>
               <div class="item-info">
                 <div class="item-name truncate">${escapeHtml(c.name)}</div>
@@ -405,6 +405,7 @@ async function renderConnectors(container) {
               ` : ''}
             </div>
             <div class="item-actions">
+              <button class="btn btn-sm edit-connector" data-id="${c.id}">✏️ Изменить</button>
               <button class="btn btn-sm test-connector" data-id="${c.id}">🔍 Тест</button>
               <button class="btn btn-sm btn-danger del-connector" data-id="${c.id}">✕</button>
             </div>
@@ -414,67 +415,123 @@ async function renderConnectors(container) {
     </div>
   `;
 
-  $('btnAddConnector')?.addEventListener('click', () => {
-    showModal('Новый коннектор', `
+  // Helper: build auth fields HTML based on auth mode
+  function authFieldsHtml(authMode, payload) {
+    const p = payload || {};
+    if (authMode === 'basic') {
+      return `
+        <div class="form-group">
+          <label class="form-label">Имя пользователя</label>
+          <input class="form-input" id="authUsername" placeholder="user" value="${escapeHtml(p.username || '')}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Пароль</label>
+          <input class="form-input" id="authPassword" type="password" placeholder="••••••" value="${escapeHtml(p.password || '')}">
+        </div>`;
+    }
+    if (authMode === 'bearer' || authMode === 'token') {
+      return `
+        <div class="form-group">
+          <label class="form-label">Токен</label>
+          <input class="form-input" id="authToken" type="password" placeholder="eyJhbG..." value="${escapeHtml(p.token || '')}">
+        </div>`;
+    }
+    return '';
+  }
+
+  // Helper: collect auth_payload from modal fields
+  function collectAuthPayload() {
+    const authMode = $('newConnAuth')?.value || 'none';
+    if (authMode === 'basic') {
+      return { username: $('authUsername')?.value || '', password: $('authPassword')?.value || '' };
+    }
+    if (authMode === 'bearer' || authMode === 'token') {
+      return { token: $('authToken')?.value || '' };
+    }
+    return {};
+  }
+
+  // Helper: open connector modal (create or edit)
+  function openConnectorModal(connector) {
+    const isEdit = !!connector;
+    const c = connector || {};
+    const authMode = c.auth_mode || 'none';
+    const authPayload = c.auth_payload || {};
+
+    showModal(isEdit ? 'Редактировать коннектор' : 'Новый коннектор', `
       <div class="form-group">
         <label class="form-label">Имя</label>
-        <input class="form-input" id="newConnName" placeholder="Например: 1C Бухгалтерия">
+        <input class="form-input" id="newConnName" placeholder="Например: 1C Бухгалтерия" value="${escapeHtml(c.name || '')}">
       </div>
       <div class="form-group">
         <label class="form-label">Тип</label>
         <select class="form-select" id="newConnType">
-          <option value="ollama">🤖 Ollama LLM</option>
-          <option value="one_c_odata">📦 1C OData</option>
-          <option value="sap_odata">🏢 SAP OData</option>
-          <option value="opc_ua">🏭 OPC UA / SCADA</option>
-          <option value="telegram">✈️ Telegram Bot</option>
-          <option value="askug">💳 АСКУГ / UGaz / E-GAZ</option>
-          <option value="mqtt">📡 MQTT IoT</option>
-          <option value="database">🗄️ База данных (SQL)</option>
-          <option value="crm_rest">👥 CRM REST</option>
-          <option value="erp_rest">⚙️ ERP REST</option>
-          <option value="rest">🌐 REST API</option>
-          <option value="graphql">🔮 GraphQL</option>
-          <option value="email">📧 Email / SMTP</option>
-          <option value="webhook">🔔 Webhook</option>
+          <option value="ollama" ${c.type==='ollama'?'selected':''}>🤖 Ollama LLM</option>
+          <option value="one_c_odata" ${c.type==='one_c_odata'?'selected':''}>📦 1C OData</option>
+          <option value="sap_odata" ${c.type==='sap_odata'?'selected':''}>🏢 SAP OData</option>
+          <option value="opc_ua" ${c.type==='opc_ua'?'selected':''}>🏭 OPC UA / SCADA</option>
+          <option value="telegram" ${c.type==='telegram'?'selected':''}>✈️ Telegram Bot</option>
+          <option value="askug" ${c.type==='askug'?'selected':''}>💳 АСКУГ / UGaz / E-GAZ</option>
+          <option value="mqtt" ${c.type==='mqtt'?'selected':''}>📡 MQTT IoT</option>
+          <option value="database" ${c.type==='database'?'selected':''}>🗄️ База данных (SQL)</option>
+          <option value="crm_rest" ${c.type==='crm_rest'?'selected':''}>👥 CRM REST</option>
+          <option value="erp_rest" ${c.type==='erp_rest'?'selected':''}>⚙️ ERP REST</option>
+          <option value="rest" ${c.type==='rest'?'selected':''}>🌐 REST API</option>
+          <option value="graphql" ${c.type==='graphql'?'selected':''}>🔮 GraphQL</option>
+          <option value="email" ${c.type==='email'?'selected':''}>📧 Email / SMTP</option>
+          <option value="webhook" ${c.type==='webhook'?'selected':''}>🔔 Webhook</option>
         </select>
       </div>
       <div class="form-group">
         <label class="form-label">Base URL</label>
-        <input class="form-input" id="newConnUrl" placeholder="http://...">
+        <input class="form-input" id="newConnUrl" placeholder="http://..." value="${escapeHtml(c.base_url || '')}">
       </div>
       <div class="form-group">
         <label class="form-label">Auth Mode</label>
         <select class="form-select" id="newConnAuth">
-          <option value="none">Нет</option>
-          <option value="basic">Basic (login/password)</option>
-          <option value="bearer">Bearer Token</option>
-          <option value="token">API Token</option>
+          <option value="none" ${authMode==='none'?'selected':''}>Нет</option>
+          <option value="basic" ${authMode==='basic'?'selected':''}>Basic (login/password)</option>
+          <option value="bearer" ${authMode==='bearer'?'selected':''}>Bearer Token</option>
+          <option value="token" ${authMode==='token'?'selected':''}>API Token</option>
         </select>
       </div>
+      <div id="authFieldsContainer">${authFieldsHtml(authMode, authPayload)}</div>
     `, `
       <button class="btn" onclick="hideModal()">Отмена</button>
-      <button class="btn btn-primary" id="btnSaveConn">Сохранить</button>
+      <button class="btn btn-primary" id="btnSaveConn">${isEdit ? 'Обновить' : 'Сохранить'}</button>
     `);
+
+    // Toggle auth fields on change
+    $('newConnAuth')?.addEventListener('change', () => {
+      const container = $('authFieldsContainer');
+      if (container) container.innerHTML = authFieldsHtml($('newConnAuth').value, {});
+    });
+
     $('btnSaveConn')?.addEventListener('click', async () => {
       try {
-        await api('/api/connectors', {
-          method: 'POST',
-          body: JSON.stringify({
-            name: $('newConnName').value,
-            type: $('newConnType').value,
-            base_url: $('newConnUrl').value,
-            auth_mode: $('newConnAuth').value,
-          }),
-        });
+        const body = {
+          name: $('newConnName').value,
+          type: $('newConnType').value,
+          base_url: $('newConnUrl').value,
+          auth_mode: $('newConnAuth').value,
+          auth_payload: collectAuthPayload(),
+        };
+        if (isEdit) {
+          await api(`/api/connectors/${c.id}`, { method: 'PUT', body: JSON.stringify(body) });
+          showToast('Коннектор обновлён', 'success');
+        } else {
+          await api('/api/connectors', { method: 'POST', body: JSON.stringify(body) });
+          showToast('Коннектор создан', 'success');
+        }
         hideModal();
-        showToast('Коннектор создан', 'success');
         await renderConnectors(container);
       } catch (err) {
         showToast('Ошибка: ' + err.message, 'error');
       }
     });
-  });
+  }
+
+  $('btnAddConnector')?.addEventListener('click', () => openConnectorModal(null));
 
   $$('.test-connector').forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -499,6 +556,13 @@ async function renderConnectors(container) {
       await api(`/api/connectors/${btn.dataset.id}`, { method: 'DELETE' });
       showToast('Коннектор удален', 'info');
       await renderConnectors(container);
+    });
+  });
+
+  $$('.edit-connector').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const c = connectors.find(x => x.id == btn.dataset.id);
+      if (c) openConnectorModal(c);
     });
   });
 }
@@ -533,6 +597,8 @@ async function renderScenarios(container) {
             </div>
             <div class="item-actions flex-col gap-8">
               <button class="btn btn-primary btn-sm run-scenario" data-id="${s.id}">▶ Запустить</button>
+              <button class="btn btn-sm edit-scenario" data-id="${s.id}">✏️ Изменить</button>
+              <button class="btn btn-sm toggle-scenario" data-id="${s.id}" data-enabled="${s.enabled ? 1 : 0}">${s.enabled ? '⏸ Выключить' : '▶ Включить'}</button>
               <button class="btn btn-sm btn-danger del-scenario" data-id="${s.id}">✕ Удалить</button>
             </div>
           </div>
@@ -541,7 +607,11 @@ async function renderScenarios(container) {
     </div>
   `;
 
-  $('btnAddScenario')?.addEventListener('click', () => {
+  $('btnAddScenario')?.addEventListener('click', async () => {
+    // Fetch connectors for selection
+    let connectors = [];
+    try { connectors = await api('/api/connectors'); } catch {}
+
     showModal('Новый сценарий', `
       <div class="form-group">
         <label class="form-label">Название</label>
@@ -572,12 +642,24 @@ async function renderScenarios(container) {
           <option value="telegram">Telegram</option>
         </select>
       </div>
+      <div class="form-group">
+        <label class="form-label">Коннекторы</label>
+        <div id="scConnectorCheckboxes" style="max-height:180px;overflow-y:auto">
+          ${connectors.length === 0 ? '<span class="text-muted">Нет коннекторов</span>' : connectors.map(c => `
+            <label style="display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer">
+              <input type="checkbox" class="sc-conn-check" value="${c.id}" style="accent-color:#59a8ff">
+              <span>${typeIcons[c.type] || '🔌'} ${escapeHtml(c.name)}</span>
+            </label>
+          `).join('')}
+        </div>
+      </div>
     `, `
       <button class="btn" onclick="hideModal()">Отмена</button>
       <button class="btn btn-primary" id="btnSaveScenario">Сохранить</button>
     `);
     $('btnSaveScenario')?.addEventListener('click', async () => {
       try {
+        const connectorIds = [...$$('.sc-conn-check:checked')].map(cb => parseInt(cb.value));
         await api('/api/scenarios', {
           method: 'POST',
           body: JSON.stringify({
@@ -586,6 +668,7 @@ async function renderScenarios(container) {
             cron_expr: $('newScCron').value,
             objective: $('newScObjective').value,
             delivery_channel: $('newScChannel').value,
+            connector_ids: connectorIds,
           }),
         });
         hideModal();
@@ -626,6 +709,102 @@ async function renderScenarios(container) {
       await api(`/api/scenarios/${btn.dataset.id}`, { method: 'DELETE' });
       showToast('Сценарий удален', 'info');
       await renderScenarios(container);
+    });
+  });
+
+  $$('.toggle-scenario').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const isEnabled = btn.dataset.enabled === '1';
+      try {
+        await api(`/api/scenarios/${btn.dataset.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ enabled: !isEnabled }),
+        });
+        showToast(isEnabled ? 'Сценарий выключен' : 'Сценарий включен', 'success');
+        await renderScenarios(container);
+      } catch (err) {
+        showToast('Ошибка: ' + err.message, 'error');
+      }
+    });
+  });
+
+  $$('.edit-scenario').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const s = scenarios.find(x => x.id == btn.dataset.id);
+      if (!s) return;
+      // Fetch connectors for selection
+      let allConnectors = [];
+      try { allConnectors = await api('/api/connectors'); } catch {}
+
+      showModal('Редактировать сценарий', `
+        <div class="form-group">
+          <label class="form-label">Название</label>
+          <input class="form-input" id="editScName" value="${escapeHtml(s.name)}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Категория</label>
+          <select class="form-select" id="editScCategory">
+            <option value="operations" ${s.category==='operations'?'selected':''}>Operations</option>
+            <option value="finance" ${s.category==='finance'?'selected':''}>Finance</option>
+            <option value="monitoring" ${s.category==='monitoring'?'selected':''}>Monitoring</option>
+            <option value="risk" ${s.category==='risk'?'selected':''}>Risk</option>
+            <option value="integration" ${s.category==='integration'?'selected':''}>Integration</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Cron Expression</label>
+          <input class="form-input" id="editScCron" value="${escapeHtml(s.cron_expr || '')}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Цель / Описание</label>
+          <textarea class="form-textarea" id="editScObjective">${escapeHtml(s.objective || '')}</textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Канал доставки</label>
+          <select class="form-select" id="editScChannel">
+            <option value="none" ${s.delivery_channel==='none'?'selected':''}>Нет (только генерация)</option>
+            <option value="telegram" ${s.delivery_channel==='telegram'?'selected':''}>Telegram</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Коннекторы</label>
+          <div id="scEditConnectorCheckboxes" style="max-height:180px;overflow-y:auto">
+            ${allConnectors.length === 0 ? '<span class="text-muted">Нет коннекторов</span>' : allConnectors.map(c => {
+              const checked = (s.connector_ids || []).includes(c.id) ? 'checked' : '';
+              return `
+                <label style="display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer">
+                  <input type="checkbox" class="sc-edit-conn-check" value="${c.id}" ${checked} style="accent-color:#59a8ff">
+                  <span>${typeIcons[c.type] || '🔌'} ${escapeHtml(c.name)}</span>
+                </label>`;
+            }).join('')}
+          </div>
+        </div>
+      `, `
+        <button class="btn" onclick="hideModal()">Отмена</button>
+        <button class="btn btn-primary" id="btnUpdateScenario">Обновить</button>
+      `);
+      $('btnUpdateScenario')?.addEventListener('click', async () => {
+        try {
+          const connectorIds = [...$$('.sc-edit-conn-check:checked')].map(cb => parseInt(cb.value));
+          await api(`/api/scenarios/${s.id}`, {
+            method: 'PUT',
+            body: JSON.stringify({
+              name: $('editScName').value,
+              category: $('editScCategory').value,
+              cron_expr: $('editScCron').value,
+              objective: $('editScObjective').value,
+              delivery_channel: $('editScChannel').value,
+              connector_ids: connectorIds,
+              enabled: s.enabled,
+            }),
+          });
+          hideModal();
+          showToast('Сценарий обновлён', 'success');
+          await renderScenarios(container);
+        } catch (err) {
+          showToast('Ошибка: ' + err.message, 'error');
+        }
+      });
     });
   });
 }
@@ -680,7 +859,13 @@ async function renderModules(container) {
       };
 
       try {
-        const endpoint = endpointMap[code] || '/api/analytics/gas-balance';
+        if (!endpointMap[code]) {
+          showToast(`Аналитика для модуля "${name}" пока недоступна`, 'warning');
+          btn.disabled = false;
+          btn.textContent = '📊 Запросить анализ';
+          return;
+        }
+        const endpoint = endpointMap[code];
         const result = await api(endpoint);
         const resultCard = $('moduleAnalysisResult');
         resultCard.style.display = 'block';
@@ -698,91 +883,7 @@ async function renderModules(container) {
   });
 }
 
-/* ══════════════ AI ASSISTANT PAGE ══════════════ */
-async function renderAssistant(container) {
-  container.innerHTML = `
-    <div class="page-header">
-      <div>
-        <h2 class="page-title">AI Ассистент</h2>
-        <p class="page-subtitle">Диалог с локальной нейросетью (Ollama) или встроенным анализатором</p>
-      </div>
-    </div>
-
-    <div class="card chat-container">
-      <div class="chat-messages" id="chatMessages">
-        ${state.chatHistory.length === 0 ? `
-          <div class="empty-state">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-            <p>Задайте вопрос AI-ассистенту</p>
-            <div class="chips">
-              <button class="chip quick-prompt" data-prompt="Сформируй отчет по газовому балансу за текущий период">📊 Газовый баланс</button>
-              <button class="chip quick-prompt" data-prompt="Анализ дебиторской задолженности и платежной дисциплины">💰 Платежи</button>
-              <button class="chip quick-prompt" data-prompt="Прогноз рисков недопоставки газа на следующий месяц">🔍 Риски</button>
-              <button class="chip quick-prompt" data-prompt="Тарифный анализ с точкой безубыточности и моделирование субсидий">📈 Тарифы</button>
-              <button class="chip quick-prompt" data-prompt="Подготовь архитектуру enterprise AI-платформы для локальной интеграции с 1C, SAP, SCADA">🏗️ Архитектура</button>
-            </div>
-          </div>
-        ` : state.chatHistory.map(msg => renderChatMessage(msg)).join('')}
-      </div>
-      <div class="chat-input-area">
-        <textarea id="chatInput" placeholder="Введите запрос для AI..." rows="1"></textarea>
-        <button class="btn btn-primary" id="chatSend">Отправить</button>
-      </div>
-    </div>
-  `;
-
-  const chatInput = $('chatInput');
-  const chatSend = $('chatSend');
-  const chatMessages = $('chatMessages');
-
-  async function sendMessage(prompt) {
-    if (!prompt.trim()) return;
-
-    // Add user message
-    state.chatHistory.push({ role: 'user', content: prompt });
-    chatMessages.innerHTML = state.chatHistory.map(msg => renderChatMessage(msg)).join('');
-    chatInput.value = '';
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-
-    // Add loading with streaming dots (OpenClaw style)
-    chatMessages.innerHTML += `<div class="chat-message ai" id="chatLoading">
-      <div class="chat-avatar">🤖</div>
-      <div class="chat-bubble">
-        <span class="provider-tag">ollama</span>
-        <div class="streaming-dots"><span></span><span></span><span></span></div>
-      </div>
-    </div>`;
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-
-    try {
-      const result = await api('/api/assistant', {
-        method: 'POST',
-        body: JSON.stringify({ prompt }),
-      });
-      state.chatHistory.push({ role: 'ai', content: result.content, provider: result.provider, model: result.model });
-    } catch (err) {
-      state.chatHistory.push({ role: 'ai', content: `Ошибка: ${err.message}`, provider: 'error' });
-    }
-
-    chatMessages.innerHTML = state.chatHistory.map(msg => renderChatMessage(msg)).join('');
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-  }
-
-  chatSend?.addEventListener('click', () => sendMessage(chatInput.value));
-  chatInput?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage(chatInput.value);
-    }
-  });
-
-  $$('.quick-prompt').forEach(btn => {
-    btn.addEventListener('click', () => {
-      chatInput.value = btn.dataset.prompt;
-      sendMessage(btn.dataset.prompt);
-    });
-  });
-}
+/* ══════════════ DOCUMENTS PAGE ══════════════ */
 
 function renderChatMessage(msg) {
   if (msg.role === 'user') {
@@ -859,6 +960,7 @@ async function renderDocuments(container) {
                 <td>
                   <div class="btn-group">
                     <a class="btn btn-sm" href="/api/documents/${d.id}/download" target="_blank">📥 Скачать</a>
+                    <button class="btn btn-sm btn-danger del-document" data-id="${d.id}">✕</button>
                   </div>
                 </td>
               </tr>
@@ -868,6 +970,15 @@ async function renderDocuments(container) {
       </div>
     `}
   `;
+
+  $$('.del-document').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Удалить документ?')) return;
+      await api(`/api/documents/${btn.dataset.id}`, { method: 'DELETE' });
+      showToast('Документ удалён', 'info');
+      await renderDocuments(container);
+    });
+  });
 }
 
 /* ══════════════ TRAINING PAGE ══════════════ */
@@ -927,7 +1038,7 @@ async function renderTraining(container) {
         <div class="card-title mb-16">Задачи обучения</div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>ID</th><th>Название</th><th>Модель</th><th>Метод</th><th>Статус</th><th>Прогресс</th><th>Дата</th></tr></thead>
+            <thead><tr><th>ID</th><th>Название</th><th>Модель</th><th>Метод</th><th>Статус</th><th>Прогресс</th><th>Дата</th><th>Действия</th></tr></thead>
             <tbody>
               ${jobs.map(j => `
                 <tr>
@@ -941,6 +1052,9 @@ async function renderTraining(container) {
                     <span class="text-sm text-muted">${j.progress}%</span>
                   </td>
                   <td class="text-muted">${formatDate(j.created_at)}</td>
+                  <td>
+                    <button class="btn btn-sm btn-danger del-training" data-id="${j.id}">✕</button>
+                  </td>
                 </tr>
               `).join('')}
             </tbody>
@@ -1000,6 +1114,17 @@ async function renderTraining(container) {
       }
     });
   });
+
+  $$('.del-training').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Удалить задачу обучения?')) return;
+      await api(`/api/training/${btn.dataset.id}`, { method: 'DELETE' });
+      showToast('Задача обучения удалена', 'info');
+      await renderTraining(container);
+    });
+  });
+
+  showToast('⚠️ Выполнение обучения — Скоро будет доступно в следующем обновлении', 'warning');
 }
 
 /* ══════════════ ETL PAGE ══════════════ */
@@ -1054,6 +1179,7 @@ async function renderETL(container) {
                     <span>→ ${p.target}</span>
                   </div>
                 </div>
+                <button class="btn btn-sm btn-danger del-etl" data-id="${p.id}">✕</button>
               </div>
             `).join('')}
           </div>
@@ -1098,6 +1224,17 @@ async function renderETL(container) {
       }
     });
   });
+
+  $$('.del-etl').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Удалить ETL пайплайн?')) return;
+      await api(`/api/etl/${btn.dataset.id}`, { method: 'DELETE' });
+      showToast('ETL пайплайн удалён', 'info');
+      await renderETL(container);
+    });
+  });
+
+  showToast('⚠️ Запуск ETL пайплайнов — Скоро будет доступно в следующем обновлении', 'warning');
 }
 
 /* ══════════════ AUDIT PAGE ══════════════ */
@@ -1205,7 +1342,7 @@ async function renderSettings(container) {
         <div class="item-list">
           <div class="item-row" style="padding:10px 14px">
             <span class="text-muted">Версия</span>
-            <strong>1.0.0</strong>
+            <strong>1.1.0</strong>
           </div>
           <div class="item-row" style="padding:10px 14px">
             <span class="text-muted">Платформа</span>
@@ -1230,6 +1367,24 @@ async function renderSettings(container) {
 
   $('btnSaveOllama')?.addEventListener('click', async () => {
     await api('/api/settings', { method: 'PUT', body: JSON.stringify({ ollama_url: $('setOllamaUrl').value, ollama_model: $('setOllamaModel').value }) });
+    // Also update the Ollama connector's base_url
+    try {
+      const connectors = await api('/api/connectors');
+      const ollamaConn = connectors.find(c => c.type === 'ollama');
+      if (ollamaConn) {
+        await api(`/api/connectors/${ollamaConn.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            name: ollamaConn.name,
+            type: ollamaConn.type,
+            base_url: $('setOllamaUrl').value,
+            auth_mode: ollamaConn.auth_mode,
+            auth_payload: ollamaConn.auth_payload || {},
+            enabled: ollamaConn.enabled,
+          }),
+        });
+      }
+    } catch {}
     showToast('Настройки Ollama сохранены', 'success');
   });
 
