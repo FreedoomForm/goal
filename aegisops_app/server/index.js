@@ -7,9 +7,7 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
-const { spawn, execSync } = require('child_process');
 const { v4: uuidv4 } = require('uuid');
-const nodeCron = require('node-cron');
 
 const { initDB, getDB, queryAll, queryOne, runSQL, saveDB, nowISO } = require('./db');
 const { createConnector, getConnectorTypes } = require('./connectors');
@@ -21,13 +19,14 @@ const { authMiddleware } = require('./auth');
 const authRoutes = require('./routes/auth');
 const workflowRoutes = require('./routes/workflows');
 const { router: mcpRoutes, autoStartPersisted: autoStartMcp } = require('./routes/mcp');
+const moduleRoutes = require('./routes/modules');
+const aiEngineRoutes = require('./routes/ai-engine');
 const tunnel = require('./tunnel');
+const modelManager = require('./services/model-manager');
+const ollamaManager = require('./services/ollama-manager');
 
-const REPORTS_DIR_DEFAULT = path.join(__dirname, '..', 'generated_reports');
-let REPORTS_DIR = REPORTS_DIR_DEFAULT;
-let DATA_DIR = path.join(__dirname, '..', 'data');
-
-const VERSION = '1.1.0';
+const REPORTS_DIR = path.join(__dirname, '..', 'generated_reports');
+if (!fs.existsSync(REPORTS_DIR)) fs.mkdirSync(REPORTS_DIR, { recursive: true });
 
 function uid() { return uuidv4().replace(/-/g, '').slice(0, 12); }
 
@@ -44,24 +43,23 @@ function safeJSON(str, fallback) {
 }
 
 /* ────────── AI layer (uses real Ollama connector) ────────── */
-async function askAI(prompt, model) {
+async function askAI(prompt) {
   // Find Ollama connector
   const ollamaRow = queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
   if (ollamaRow) {
     try {
       const connector = createConnector(ollamaRow);
-      const useModel = model || activeModel || connector.model;
       const result = await connector.chat([
         { role: 'system', content: 'Ты enterprise AI-аналитик для газовых компаний и банков. Отвечай структурированно, с цифрами. Русский язык.' },
         { role: 'user', content: prompt },
-      ], { model: useModel });
+      ]);
       return result; // { provider: 'ollama', model, content }
     } catch (err) {
       // Ollama not available — fall through to fallback
     }
   }
   // Fallback: built-in analyzer
-  return { provider: 'fallback', model: model || 'built-in', content: generateFallbackAnalysis(prompt) };
+  return { provider: 'fallback', model: 'built-in', content: generateFallbackAnalysis(prompt) };
 }
 
 function generateFallbackAnalysis(prompt) {
@@ -123,7 +121,7 @@ function generateHTMLReport(scenario, aiResult, collectedData) {
     </div>
     <div class="card"><h2>🤖 Аналитический вывод</h2><pre>${aiResult.content}</pre></div>
     <div class="card"><h2>📡 Данные коннекторов</h2>${connectorSections || '<p style="color:#8ea1c9">Нет данных</p>'}</div>
-    <div class="footer">AegisOps Local AI v${VERSION} • Конфиденциально • ${now}</div>
+    <div class="footer">AegisOps Local AI v1.0.0 • Конфиденциально • ${now}</div>
   </div>
 </body>
 </html>`;
@@ -156,6 +154,8 @@ function createApp() {
   // Remote routes are behind authMiddleware; localhost bypasses it by default.
   app.use('/api/workflows', authMiddleware({ required: true }), workflowRoutes);
   app.use('/api/mcp', authMiddleware({ required: true }), mcpRoutes);
+  app.use('/api/modules', moduleRoutes);
+  app.use('/api/ai', aiEngineRoutes);
 
   // Tunnel management (admin only)
   app.get('/api/tunnel/status', authMiddleware({ required: true }), (req, res) => res.json(tunnel.status()));
@@ -186,7 +186,7 @@ function createApp() {
     const c = queryOne('SELECT COUNT(*) as c FROM connectors');
     const s = queryOne('SELECT COUNT(*) as c FROM scenarios');
     const d = queryOne('SELECT COUNT(*) as c FROM documents');
-    res.json({ status: 'ok', product: 'AegisOps Local AI', version: VERSION, connectors: c?.c || 0, scenarios: s?.c || 0, documents: d?.c || 0, ts: nowISO() });
+    res.json({ status: 'ok', product: 'AegisOps Local AI', version: '1.0.0', connectors: c?.c || 0, scenarios: s?.c || 0, documents: d?.c || 0, ts: nowISO() });
   });
 
   /* ── Dashboard ── */
@@ -221,7 +221,6 @@ function createApp() {
 
   app.post('/api/connectors', (req, res) => {
     const { name, type, base_url, auth_mode, auth_payload, config, enabled } = req.body;
-    if (!name || !type) return res.status(400).json({ error: 'name and type are required' });
     const now = nowISO();
     const result = runSQL(`INSERT INTO connectors (name, type, base_url, auth_mode, auth_payload, config, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [name, type, base_url || '', auth_mode || 'none', JSON.stringify(auth_payload || {}), JSON.stringify(config || {}), enabled !== false ? 1 : 0, now, now]);
@@ -312,8 +311,15 @@ function createApp() {
 
   app.put('/api/scenarios/:id', (req, res) => {
     const { name, category, cron_expr, connector_ids, objective, delivery_channel, config, enabled } = req.body;
+    const existing = queryOne('SELECT * FROM scenarios WHERE id = ?', [req.params.id]);
+    if (!existing) return res.status(404).json({ error: 'Scenario not found' });
     runSQL(`UPDATE scenarios SET name=?, category=?, cron_expr=?, connector_ids=?, objective=?, delivery_channel=?, config=?, enabled=?, updated_at=? WHERE id=?`,
-      [name, category, cron_expr || '', JSON.stringify(connector_ids || []), objective, delivery_channel || 'none', JSON.stringify(config || {}), enabled ? 1 : 0, nowISO(), req.params.id]);
+      [name || existing.name, category || existing.category, cron_expr ?? existing.cron_expr,
+       JSON.stringify(connector_ids || safeJSON(existing.connector_ids, [])),
+       objective ?? existing.objective, delivery_channel || existing.delivery_channel,
+       JSON.stringify(config || safeJSON(existing.config, {})),
+       enabled !== undefined ? (enabled ? 1 : 0) : existing.enabled,
+       nowISO(), req.params.id]);
     const row = queryOne('SELECT * FROM scenarios WHERE id = ?', [req.params.id]);
     logEvent('scenario.updated', { id: req.params.id });
     res.json(row);
@@ -392,407 +398,107 @@ function createApp() {
     res.download(row.path);
   });
 
-  app.delete('/api/documents/:id', (req, res) => {
-    const row = queryOne('SELECT * FROM documents WHERE id = ?', [req.params.id]);
-    if (row && row.path && fs.existsSync(row.path)) {
-      try { fs.unlinkSync(row.path); } catch {}
-    }
-    runSQL('DELETE FROM documents WHERE id = ?', [req.params.id]);
-    logEvent('document.deleted', { id: req.params.id });
-    res.json({ ok: true });
-  });
-
   /* ── AI Assistant (real Ollama) ── */
   app.post('/api/assistant', async (req, res) => {
     const { prompt, model } = req.body;
     if (!prompt?.trim()) return res.status(400).json({ error: 'prompt required' });
-    const result = await askAI(prompt, model);
-    logEvent('assistant.asked', { prompt: prompt.slice(0, 200), provider: result.provider });
+    // If model specified, use it for this request
+    if (model) ollamaManager.setModel(model);
+    const result = await askAI(prompt);
+    logEvent('assistant.asked', { prompt: prompt.slice(0, 200), provider: result.provider, model: result.model });
     res.json(result);
   });
 
-  /* ── AI Assistant Streaming (SSE) ── */
+  /* ── AI Assistant with Streaming (SSE) ── */
   app.post('/api/assistant/stream', async (req, res) => {
     const { prompt, model } = req.body;
     if (!prompt?.trim()) return res.status(400).json({ error: 'prompt required' });
 
+    const activeModel = model || ollamaManager.getActiveModel();
+
+    // Set up SSE
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
+    res.setHeader('X-Accel-Buffering', 'no');
 
+    const sendSSE = (event, data) => {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+
+    sendSSE('meta', { model: activeModel, provider: 'ollama' });
+
+    // Try Ollama streaming
     const ollamaRow = queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
-    if (!ollamaRow) {
-      // No Ollama — fallback to non-streaming
-      const result = await askAI(prompt, model);
-      res.write(`event: token\ndata: ${JSON.stringify({ content: result.content, model: result.model })}\n\n`);
-      res.write(`event: done\ndata: ${JSON.stringify({ content: result.content, model: result.model, provider: result.provider, done: true })}\n\n`);
-      res.end();
-      return;
-    }
+    const ollamaUrl = ollamaRow?.base_url || ollamaManager._baseUrl;
 
     try {
-      const connector = createConnector(ollamaRow);
-      const useModel = model || connector.model;
-      const ollamaUrl = connector.baseUrl;
-
-      const response = await fetch(`${ollamaUrl}/api/chat`, {
+      const chatRes = await fetch(`${ollamaUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: useModel,
+          model: activeModel,
           stream: true,
           messages: [
-            { role: 'system', content: 'Ты enterprise AI-аналитик для газовых компаний. Отвечай структурированно, с цифрами. Русский язык.' },
+            { role: 'system', content: 'Ты enterprise AI-аналитик для газовых компаний и банков. Отвечай структурированно, с цифрами. Русский язык.' },
             { role: 'user', content: prompt },
           ],
         }),
       });
 
-      if (!response.ok) {
-        // Ollama error — fallback
-        const result = await askAI(prompt, model);
-        res.write(`event: token\ndata: ${JSON.stringify({ content: result.content })}\n\n`);
-        res.write(`event: done\ndata: ${JSON.stringify({ content: result.content, model: result.model, provider: result.provider, done: true })}\n\n`);
-        res.end();
-        return;
-      }
+      if (!chatRes.ok) throw new Error(`Ollama HTTP ${chatRes.status}`);
 
-      const decoder = new (require('string_decoder')).StringDecoder('utf-8');
-      let buffer = '';
+      const reader = chatRes.body;
       let fullContent = '';
 
-      for await (const chunk of response.body) {
-        buffer += decoder.write(chunk);
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
+      reader.on('data', (chunk) => {
+        try {
+          const lines = chunk.toString().split('\n').filter(l => l.trim());
+          for (const line of lines) {
             const data = JSON.parse(line);
             if (data.message?.content) {
               fullContent += data.message.content;
-              res.write(`event: token\ndata: ${JSON.stringify({ content: data.message.content, model: useModel })}\n\n`);
+              sendSSE('token', { content: data.message.content, done: false });
             }
             if (data.done) {
-              res.write(`event: done\ndata: ${JSON.stringify({ content: fullContent, model: useModel, provider: 'ollama', done: true })}\n\n`);
+              sendSSE('done', {
+                content: fullContent,
+                model: activeModel,
+                provider: 'ollama',
+                evalCount: data.eval_count,
+                totalDuration: data.total_duration,
+              });
             }
-          } catch {}
-        }
-      }
-      // If stream ended without done signal
-      if (fullContent) {
-        res.write(`event: done\ndata: ${JSON.stringify({ content: fullContent, model: useModel, provider: 'ollama', done: true })}\n\n`);
-      }
-      res.end();
-    } catch (err) {
-      // Streaming failed — try non-streaming fallback
-      try {
-        const result = await askAI(prompt, model);
-        res.write(`event: token\ndata: ${JSON.stringify({ content: result.content })}\n\n`);
-        res.write(`event: done\ndata: ${JSON.stringify({ content: result.content, model: result.model, provider: result.provider, done: true })}\n\n`);
-      } catch (fallbackErr) {
-        res.write(`event: error\ndata: ${JSON.stringify({ error: fallbackErr.message })}\n\n`);
-      }
-      res.end();
-    }
-  });
-
-  /* ── AI Engine Management ── */
-  let ollamaProcess = null;
-  let openclawProcess = null;
-  let activeModel = null;
-  let activeProvider = 'ollama';
-  const pullProgress = new Map();
-
-  // Helper: check if Ollama is installed
-  function isOllamaInstalled() {
-    try {
-      const cmd = process.platform === 'win32' ? 'where ollama 2>nul' : 'which ollama 2>/dev/null';
-      execSync(cmd, { encoding: 'utf8' });
-      return true;
-    } catch { return false; }
-  }
-
-  // Helper: check if Ollama is running
-  async function isOllamaRunning() {
-    try {
-      const ollamaRow = queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
-      const url = ollamaRow?.base_url || 'http://127.0.0.1:11434';
-      const res = await fetch(`${url}/api/tags`);
-      return res.ok;
-    } catch { return false; }
-  }
-
-  // Helper: get Ollama models
-  async function getOllamaModels() {
-    try {
-      const ollamaRow = queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
-      const url = ollamaRow?.base_url || 'http://127.0.0.1:11434';
-      const res = await fetch(`${url}/api/tags`);
-      const data = await res.json();
-      return (data.models || []).map(m => ({
-        name: m.name,
-        size: m.size,
-        parameterSize: m.details?.parameter_size || '',
-        family: m.details?.family || '',
-        quantization: m.details?.quantization_level || '',
-        modified: m.modified_at,
-      }));
-    } catch { return []; }
-  }
-
-  // Helper: get Ollama version
-  async function getOllamaVersion() {
-    try {
-      const ollamaRow = queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
-      const url = ollamaRow?.base_url || 'http://127.0.0.1:11434';
-      const res = await fetch(`${url}/api/version`);
-      const data = await res.json();
-      return data.version || 'unknown';
-    } catch { return null; }
-  }
-
-  // Recommended models for gas sector
-  const RECOMMENDED_MODELS = [
-    { name: 'qwen2.5:7b-instruct', desc: 'Оптимальная модель для газового сектора (7B, русский язык)', size: '4.4 GB', recommended: true },
-    { name: 'qwen2.5:14b-instruct', desc: 'Высокое качество анализа (14B, требуется 10+ GB VRAM)', size: '8.7 GB', recommended: false },
-    { name: 'llama3.1:8b-instruct', desc: 'Универсальная модель для анализа (8B)', size: '4.7 GB', recommended: false },
-    { name: 'gemma3:4b', desc: 'Компактная модель для быстрого инференса (4B)', size: '3.3 GB', recommended: false },
-    { name: 'mistral:7b-instruct', desc: 'Хорошая для структурированных задач (7B)', size: '4.1 GB', recommended: false },
-    { name: 'nomic-embed-text', desc: 'Модель эмбеддингов для поиска по документам', size: '274 MB', recommended: false },
-  ];
-
-  // GET /api/ai/status
-  app.get('/api/ai/status', async (req, res) => {
-    try {
-      const ollamaRunning = await isOllamaRunning();
-      const ollamaInstalled = isOllamaInstalled();
-      const ollamaModels = ollamaRunning ? await getOllamaModels() : [];
-      const ollamaVersion = ollamaRunning ? await getOllamaVersion() : null;
-
-      // Check if active model is still available
-      if (activeModel && !ollamaModels.find(m => m.name === activeModel)) {
-        activeModel = ollamaModels.length > 0 ? ollamaModels[0].name : null;
-      } else if (!activeModel && ollamaModels.length > 0) {
-        activeModel = ollamaModels[0].name;
-      }
-
-      // Load saved active model from settings
-      if (!activeModel) {
-        const savedModel = queryOne("SELECT value FROM settings WHERE key='ollama_model'");
-        if (savedModel?.value) activeModel = savedModel.value;
-      }
-
-      res.json({
-        ollama: {
-          running: ollamaRunning,
-          installed: ollamaInstalled,
-          version: ollamaVersion,
-          models: ollamaModels,
-          baseUrl: queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1")?.base_url || 'http://127.0.0.1:11434',
-        },
-        openclaw: {
-          running: !!openclawProcess,
-          installed: false, // TODO: implement OpenClaw install check
-        },
-        activeModel,
-        activeProvider,
-        recommended: RECOMMENDED_MODELS.map(m => ({
-          ...m,
-          installed: ollamaModels.some(om => om.name === m.name || om.name.startsWith(m.name.split(':')[0])),
-        })),
-      });
-    } catch (err) {
-      res.json({
-        ollama: { running: false, installed: false, models: [], baseUrl: 'http://127.0.0.1:11434' },
-        openclaw: { running: false, installed: false },
-        activeModel: null, activeProvider: 'ollama', recommended: RECOMMENDED_MODELS,
-        error: err.message,
-      });
-    }
-  });
-
-  // POST /api/ai/ensure — auto-start everything
-  app.post('/api/ai/ensure', async (req, res) => {
-    const result = { ollama: {}, openclaw: {} };
-
-    // Ensure Ollama
-    if (!await isOllamaRunning()) {
-      if (!isOllamaInstalled()) {
-        try {
-          // Auto-install Ollama
-          if (process.platform === 'win32') {
-            execSync('winget install Ollama.Ollama --accept-source-agreements --accept-package-agreements', { timeout: 300000 });
-          } else if (process.platform === 'darwin') {
-            execSync('brew install ollama', { timeout: 300000 });
-          } else {
-            execSync('curl -fsSL https://ollama.com/install.sh | sh', { timeout: 300000 });
           }
-          result.ollama.installed = true;
-        } catch (err) {
-          result.ollama.installError = err.message;
+        } catch (e) {
+          // Non-JSON chunk, ignore
         }
-      }
-      try {
-        ollamaProcess = spawn('ollama', ['serve'], { detached: true, stdio: 'ignore' });
-        ollamaProcess.unref();
-        // Wait for Ollama to start
-        await new Promise(r => setTimeout(r, 3000));
-        result.ollama.started = true;
-      } catch (err) {
-        result.ollama.startError = err.message;
-      }
-    }
-    result.ollama.running = await isOllamaRunning();
+      });
 
-    // OpenClaw — placeholder for now
-    result.openclaw.running = !!openclawProcess;
+      reader.on('end', () => {
+        if (!res.writableEnded) {
+          sendSSE('done', { content: fullContent, model: activeModel, provider: 'ollama' });
+          res.end();
+        }
+      });
 
-    logEvent('ai.ensured', result);
-    res.json(result);
-  });
+      reader.on('error', (err) => {
+        sendSSE('error', { error: err.message });
+        res.end();
+      });
 
-  // POST /api/ai/ollama/start
-  app.post('/api/ai/ollama/start', async (req, res) => {
-    try {
-      if (await isOllamaRunning()) {
-        return res.json({ status: 'already_running' });
-      }
-      ollamaProcess = spawn('ollama', ['serve'], { detached: true, stdio: 'ignore' });
-      ollamaProcess.unref();
-      await new Promise(r => setTimeout(r, 3000));
-      const running = await isOllamaRunning();
-      logEvent('ai.ollama.started', { running });
-      res.json({ status: running ? 'started' : 'failed' });
+      req.on('close', () => {
+        reader.destroy();
+      });
+
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      // Fallback to non-streaming
+      const result = await askAI(prompt);
+      sendSSE('done', result);
+      res.end();
     }
-  });
 
-  // POST /api/ai/ollama/stop
-  app.post('/api/ai/ollama/stop', async (req, res) => {
-    try {
-      if (ollamaProcess) { ollamaProcess.kill(); ollamaProcess = null; }
-      // Kill ollama serve process using platform-appropriate command
-      try {
-        const killCmd = process.platform === 'win32' ? 'taskkill /F /IM ollama.exe 2>nul' : 'pkill -f "ollama serve" 2>/dev/null';
-        execSync(killCmd);
-      } catch {}
-      logEvent('ai.ollama.stopped', {});
-      res.json({ status: 'stopped' });
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // POST /api/ai/ollama/install
-  app.post('/api/ai/ollama/install', async (req, res) => {
-    try {
-      if (process.platform === 'win32') {
-        execSync('winget install Ollama.Ollama --accept-source-agreements --accept-package-agreements', { timeout: 300000 });
-      } else if (process.platform === 'darwin') {
-        execSync('brew install ollama', { timeout: 300000 });
-      } else {
-        execSync('curl -fsSL https://ollama.com/install.sh | sh', { timeout: 300000 });
-      }
-      logEvent('ai.ollama.installed', {});
-      res.json({ status: 'installed' });
-    } catch (err) {
-      res.status(500).json({ error: err.message, hint: 'Install manually from https://ollama.com' });
-    }
-  });
-
-  // POST /api/ai/openclaw/start
-  app.post('/api/ai/openclaw/start', async (req, res) => {
-    // OpenClaw is a future feature — return placeholder
-    res.json({ status: 'not_implemented', message: 'OpenClaw MCP agent will be available in a future update' });
-  });
-
-  // POST /api/ai/openclaw/stop
-  app.post('/api/ai/openclaw/stop', async (req, res) => {
-    if (openclawProcess) { openclawProcess.kill(); openclawProcess = null; }
-    res.json({ status: 'stopped' });
-  });
-
-  // POST /api/ai/openclaw/install
-  app.post('/api/ai/openclaw/install', async (req, res) => {
-    res.json({ status: 'not_implemented', message: 'OpenClaw installation will be available in a future update' });
-  });
-
-  // POST /api/ai/openclaw/configure
-  app.post('/api/ai/openclaw/configure', async (req, res) => {
-    res.json({ status: 'not_implemented', config: { defaultModel: activeModel } });
-  });
-
-  // POST /api/ai/models/select — set active model
-  app.post('/api/ai/models/select', async (req, res) => {
-    const { model, provider } = req.body;
-    if (!model) return res.status(400).json({ error: 'model required' });
-    activeModel = model;
-    activeProvider = provider || 'ollama';
-    // Persist to settings
-    runSQL('INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)',
-      ['ollama_model', model, nowISO()]);
-    logEvent('ai.model.selected', { model, provider: activeProvider });
-    res.json({ status: 'ok', activeModel, activeProvider });
-  });
-
-  // POST /api/ai/models/pull/:model — start pulling a model
-  app.post('/api/ai/models/pull/:model', async (req, res) => {
-    const model = req.params.model;
-    if (!model) return res.status(400).json({ error: 'model name required' });
-
-    // Start pull in background
-    pullProgress.set(model, { status: 'pulling', progress: 0, statusText: 'Starting download...' });
-    logEvent('ai.model.pull_started', { model });
-
-    // Fire and forget the pull process
-    const pullProc = spawn('ollama', ['pull', model], { stdio: 'pipe' });
-    pullProc.stdout?.on('data', (data) => {
-      const text = data.toString();
-      const match = text.match(/(\d+)%/);
-      if (match) {
-        pullProgress.set(model, { status: 'pulling', progress: parseInt(match[1]), statusText: `Downloading ${match[1]}%` });
-      }
-    });
-    pullProc.on('close', (code) => {
-      if (code === 0) {
-        pullProgress.set(model, { status: 'completed', progress: 100, statusText: 'Download complete' });
-        logEvent('ai.model.pulled', { model, success: true });
-      } else {
-        pullProgress.set(model, { status: 'failed', progress: 0, statusText: 'Download failed', error: `Exit code ${code}` });
-        logEvent('ai.model.pulled', { model, success: false, code });
-      }
-    });
-    pullProc.on('error', (err) => {
-      pullProgress.set(model, { status: 'failed', progress: 0, statusText: 'Download failed', error: err.message });
-    });
-
-    res.json({ status: 'pulling', model });
-  });
-
-  // GET /api/ai/models/pull-status
-  app.get('/api/ai/models/pull-status', (req, res) => {
-    const result = {};
-    for (const [model, progress] of pullProgress) {
-      result[model] = progress;
-    }
-    res.json(result);
-  });
-
-  // DELETE /api/ai/models/:model — delete a model
-  app.delete('/api/ai/models/:model', async (req, res) => {
-    const model = req.params.model;
-    try {
-      execSync(`ollama rm ${model}`, { timeout: 60000 });
-      if (activeModel === model) activeModel = null;
-      logEvent('ai.model.deleted', { model });
-      res.json({ status: 'deleted', model });
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
+    logEvent('assistant.streamed', { prompt: prompt.slice(0, 200), model: activeModel });
   });
 
   /* ── Module analytics (real AI) ── */
@@ -821,9 +527,39 @@ function createApp() {
     res.json(queryOne('SELECT * FROM training_jobs WHERE id = ?', [result.lastInsertRowid]));
   });
 
-  app.delete('/api/training/:id', (req, res) => {
-    runSQL('DELETE FROM training_jobs WHERE id = ?', [req.params.id]);
-    logEvent('training.deleted', { id: req.params.id });
+  // Start a pending training job (basic stub execution with progress simulation)
+  app.post('/api/training/:id/start', async (req, res) => {
+    const job = queryOne('SELECT * FROM training_jobs WHERE id = ?', [req.params.id]);
+    if (!job) return res.status(404).json({ error: 'Training job not found' });
+    if (job.status === 'running') return res.status(400).json({ error: 'Already running' });
+    if (job.status === 'completed') return res.status(400).json({ error: 'Already completed' });
+
+    runSQL("UPDATE training_jobs SET status='running', progress=0, updated_at=? WHERE id=?", [nowISO(), req.params.id]);
+    logEvent('training.started', { id: req.params.id });
+    res.json({ ok: true, status: 'running' });
+
+    // Simulate training progress in background
+    const jobId = req.params.id;
+    const totalSteps = 10;
+    for (let step = 1; step <= totalSteps; step++) {
+      await new Promise(r => setTimeout(r, 2000 + Math.random() * 2000));
+      const progress = Math.round((step / totalSteps) * 100);
+      const currentJob = queryOne('SELECT * FROM training_jobs WHERE id = ?', [jobId]);
+      if (!currentJob || currentJob.status !== 'running') break;
+      runSQL("UPDATE training_jobs SET progress=?, updated_at=? WHERE id=?", [progress, nowISO(), jobId]);
+      if (step === totalSteps) {
+        runSQL("UPDATE training_jobs SET status='completed', progress=100, updated_at=? WHERE id=?", [nowISO(), jobId]);
+        logEvent('training.completed', { id: jobId });
+      }
+    }
+  });
+
+  // Cancel a running training job
+  app.post('/api/training/:id/cancel', (req, res) => {
+    const job = queryOne('SELECT * FROM training_jobs WHERE id = ?', [req.params.id]);
+    if (!job) return res.status(404).json({ error: 'Not found' });
+    runSQL("UPDATE training_jobs SET status='cancelled', updated_at=? WHERE id=?", [nowISO(), req.params.id]);
+    logEvent('training.cancelled', { id: req.params.id });
     res.json({ ok: true });
   });
 
@@ -837,6 +573,38 @@ function createApp() {
     res.json(queryOne('SELECT * FROM etl_pipelines WHERE id = ?', [result.lastInsertRowid]));
   });
 
+  // Run an ETL pipeline
+  app.post('/api/etl/:id/run', async (req, res) => {
+    const pipeline = queryOne('SELECT * FROM etl_pipelines WHERE id = ?', [req.params.id]);
+    if (!pipeline) return res.status(404).json({ error: 'Pipeline not found' });
+
+    runSQL("UPDATE etl_pipelines SET status='running' WHERE id=?", [req.params.id]);
+    logEvent('etl.started', { id: req.params.id, name: pipeline.name });
+    res.json({ ok: true, status: 'running' });
+
+    // Simulate ETL execution in background
+    const etlId = req.params.id;
+    const connId = pipeline.source_connector_id;
+    let result = { rows: 0, status: 'completed' };
+    if (connId) {
+      const connRow = queryOne('SELECT * FROM connectors WHERE id = ?', [connId]);
+      if (connRow) {
+        try {
+          const connector = createConnector(connRow);
+          const data = await connector.fetchData({});
+          result.rows = Array.isArray(data) ? data.length : (data.records || 1);
+        } catch (err) {
+          result.status = 'error';
+          result.error = err.message;
+        }
+      }
+    }
+    await new Promise(r => setTimeout(r, 1500));
+    runSQL("UPDATE etl_pipelines SET status=?, last_run_at=? WHERE id=?", [result.status, nowISO(), etlId]);
+    logEvent('etl.completed', { id: etlId, status: result.status, rows: result.rows });
+  });
+
+  // Delete ETL pipeline
   app.delete('/api/etl/:id', (req, res) => {
     runSQL('DELETE FROM etl_pipelines WHERE id = ?', [req.params.id]);
     logEvent('etl.deleted', { id: req.params.id });
@@ -874,19 +642,8 @@ function createApp() {
 }
 
 /* ────────── Start server ────────── */
-async function startServer(port = 18090, { bind = '127.0.0.1', dataDir } = {}) {
-  // Use Electron's userData directory if provided (avoids ENOTDIR inside ASAR),
-  // otherwise fall back to relative paths (development / standalone mode).
-  if (dataDir) {
-    DATA_DIR = path.join(dataDir, 'data');
-    REPORTS_DIR = path.join(dataDir, 'generated_reports');
-  }
-
-  // Ensure writable directories exist
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  if (!fs.existsSync(REPORTS_DIR)) fs.mkdirSync(REPORTS_DIR, { recursive: true });
-
-  await initDB(DATA_DIR);
+async function startServer(port = 18090, { bind = '127.0.0.1' } = {}) {
+  await initDB();
   const app = createApp();
   // Auto-start persisted MCP servers in background (do not block listen)
   autoStartMcp().catch(err => log.warn('mcp.autostart_error', { err: err.message }));
@@ -894,7 +651,7 @@ async function startServer(port = 18090, { bind = '127.0.0.1', dataDir } = {}) {
   return new Promise((resolve, reject) => {
     const server = http.createServer(app);
     server.listen(port, bind, () => {
-      log.info('server.listening', { url: `http://${bind}:${port}`, bind, port, dataDir: DATA_DIR });
+      log.info('server.listening', { url: `http://${bind}:${port}`, bind, port });
       resolve(server);
     });
     server.on('error', reject);

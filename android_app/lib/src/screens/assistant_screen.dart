@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../services/api_client.dart';
 import '../theme.dart';
 
@@ -40,12 +42,17 @@ class _AssistantScreenState extends State<AssistantScreen> with TickerProviderSt
       setState(() {
         _models = ollamaModels.map((m) => {'name': m['name']?.toString() ?? '', 'size': m['size'] ?? 0, 'family': m['family']?.toString() ?? ''}).toList();
         _selectedModel = status['activeModel']?.toString();
-        // Validate selected model exists in the list to prevent DropdownButton crash
-        if (_selectedModel != null && !_models.any((m) => m['name'] == _selectedModel)) {
-          _selectedModel = _models.isNotEmpty ? _models.first['name'] as String : null;
-        }
       });
-    } catch (_) {}
+    } catch (e) {
+      // Show feedback to user that AI is not available
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('AI недоступен. Проверьте подключение к серверу.'),
+          backgroundColor: const Color(0xFFFFB347),
+          duration: const Duration(seconds: 3),
+        ));
+      }
+    }
   }
 
   Future<void> _send() async {
@@ -67,7 +74,7 @@ class _AssistantScreenState extends State<AssistantScreen> with TickerProviderSt
   Future<void> _sendNormal(String prompt) async {
     try {
       final body = {'prompt': prompt};
-      if (_selectedModel != null) body['model'] = _selectedModel!;
+      if (_selectedModel != null) body['model'] = _selectedModel;
       final r = await ApiClient.instance.postJson('/api/assistant', body);
       setState(() { _messages.add(_Msg(role: 'ai', content: r['content']?.toString() ?? '', provider: r['provider']?.toString(), model: r['model']?.toString())); });
     } catch (e) {
@@ -81,7 +88,7 @@ class _AssistantScreenState extends State<AssistantScreen> with TickerProviderSt
 
     try {
       final body = {'prompt': prompt, 'model': _selectedModel};
-      final stream = ApiClient.instance.postSse('/api/assistant/stream', body);
+      final stream = await ApiClient.instance.postSse('/api/assistant/stream', body);
 
       await for (final event in stream) {
         if (event['type'] == 'token' && event['content'] != null) {
@@ -99,11 +106,10 @@ class _AssistantScreenState extends State<AssistantScreen> with TickerProviderSt
         }
       }
     } catch (e) {
-      streamingMsg.content += '\nПереключаюсь на обычный режим...';
+      streamingMsg.content += '\nОшибка стриминга: $e';
       streamingMsg.isStreaming = false;
-      if (mounted) setState(() {});
-      await _sendNormal(prompt);
-      _messages.remove(streamingMsg);
+      // Don't call _sendNormal here — it would create a duplicate message.
+      // The streaming message already contains the error info.
       if (mounted) setState(() {});
     }
   }
@@ -123,18 +129,13 @@ class _AssistantScreenState extends State<AssistantScreen> with TickerProviderSt
         title: Row(
           children: [
             Container(
-              width: 30, height: 30,
+              width: 28, height: 28,
               decoration: BoxDecoration(
-                gradient: LinearGradient(colors: [
-                  AegisColors.accentPurple.withOpacity(0.85),
-                  AegisColors.accentBlue.withOpacity(0.85),
-                ]),
-                borderRadius: BorderRadius.circular(9),
-                boxShadow: [
-                  BoxShadow(color: AegisColors.accentPurple.withOpacity(0.4), blurRadius: 10, offset: const Offset(0, 2)),
-                ],
+                color: const Color(0xFF7C5CFF).withOpacity(0.2),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFF7C5CFF).withOpacity(0.3)),
               ),
-              child: const Icon(Icons.auto_awesome_rounded, size: 17, color: Colors.white),
+              child: const Icon(Icons.smart_toy, size: 16, color: Color(0xFF7C5CFF)),
             ),
             const SizedBox(width: 10),
             const Text('AI Ассистент'),
@@ -155,7 +156,7 @@ class _AssistantScreenState extends State<AssistantScreen> with TickerProviderSt
                 value: _selectedModel,
                 underline: const SizedBox(),
                 icon: const Icon(Icons.arrow_drop_down, color: Color(0xFF59A8FF), size: 18),
-                style: const TextStyle(color: Color(0xFF59A8FF), fontSize: 11, fontFamily: 'Inter'),
+                style: GoogleFonts.inter(color: const Color(0xFF59A8FF), fontSize: 11),
                 items: _models.map((m) => DropdownMenuItem(
                   value: m['name'] as String,
                   child: Text(m['name'] as String, style: const TextStyle(fontSize: 11)),
@@ -196,30 +197,40 @@ class _AssistantScreenState extends State<AssistantScreen> with TickerProviderSt
                     child: Container(width: 6, height: 6, decoration: const BoxDecoration(color: Color(0xFF59A8FF), shape: BoxShape.circle, boxShadow: [BoxShadow(color: Color(0xFF59A8FF), blurRadius: 6)])),
                   ),
                   const SizedBox(width: 8),
-                  Text('$_selectedModel', style: const TextStyle(fontSize: 11, color: Color(0xFF59A8FF), fontFamily: 'Inter')),
+                  Text('$_selectedModel', style: GoogleFonts.inter(fontSize: 11, color: const Color(0xFF59A8FF))),
                   const Spacer(),
                   if (_useStream)
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(color: const Color(0xFF23C483).withOpacity(0.15), borderRadius: BorderRadius.circular(6)),
-                      child: Text('STREAM', style: const TextStyle(fontSize: 9, color: Color(0xFF23C483), fontWeight: FontWeight.w700, fontFamily: 'Inter')),
+                      child: Text('STREAM', style: GoogleFonts.inter(fontSize: 9, color: const Color(0xFF23C483), fontWeight: FontWeight.w700)),
                     ),
                 ],
               ),
             ),
           // Messages
-          if (_messages.isNotEmpty)
-            Expanded(child: ListView.builder(
-              controller: _scroll,
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-              itemCount: _messages.length,
-              itemBuilder: (_, i) => _buildMessage(_messages[i]),
-            )),
+          Expanded(child: ListView.builder(
+            controller: _scroll,
+            padding: const EdgeInsets.all(12),
+            itemCount: _messages.length,
+            itemBuilder: (_, i) => _buildMessage(_messages[i]),
+          )),
           if (_loading) const Padding(padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4), child: LinearProgressIndicator(backgroundColor: Color(0xFF24304E))),
-          // Quick actions / welcome
+          // Quick actions
           if (_messages.isEmpty)
-            Expanded(
-              child: _buildWelcome(),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  QuickActionChip(label: '📊 Газовый баланс', onTap: () { _ctrl.text = 'Сформируй отчёт по газовому балансу'; _send(); }),
+                  QuickActionChip(label: '💰 Платежи', onTap: () { _ctrl.text = 'Анализ дебиторской задолженности'; _send(); }),
+                  QuickActionChip(label: '🔍 Риски', onTap: () { _ctrl.text = 'Прогноз рисков недопоставки газа'; _send(); }),
+                  QuickActionChip(label: '📈 Тарифы', onTap: () { _ctrl.text = 'Тарифный анализ с точкой безубыточности'; _send(); }),
+                  QuickActionChip(label: '🔌 Коннекторы', onTap: () { _ctrl.text = 'Покажи статус всех коннекторов'; _send(); }),
+                ],
+              ),
             ),
           // Input
           SafeArea(child: Padding(
@@ -233,10 +244,10 @@ class _AssistantScreenState extends State<AssistantScreen> with TickerProviderSt
                 ),
                 child: TextField(
                   controller: _ctrl, minLines: 1, maxLines: 4,
-                  style: const TextStyle(fontSize: 14, fontFamily: 'Inter'),
+                  style: GoogleFonts.inter(fontSize: 14),
                   decoration: InputDecoration(
                     hintText: 'Задайте вопрос AI…',
-                    hintStyle: const TextStyle(color: Color(0xFF5E6C88), fontFamily: 'Inter'),
+                    hintStyle: GoogleFonts.inter(color: const Color(0xFF5E6C88)),
                     border: InputBorder.none,
                     contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   ),
@@ -245,13 +256,13 @@ class _AssistantScreenState extends State<AssistantScreen> with TickerProviderSt
               )),
               const SizedBox(width: 8),
               Container(
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(colors: [Color(0xFF59A8FF), Color(0xFF7C5CFF)]),
-                  borderRadius: const BorderRadius.only(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(colors: [Color(0xFF59A8FF), Color(0xFF7C5CFF)]),
+                  borderRadius: BorderRadius.only(
                     topLeft: Radius.circular(16), bottomLeft: Radius.circular(16),
                     topRight: Radius.circular(20), bottomRight: Radius.circular(20),
                   ),
-                  boxShadow: [BoxShadow(color: const Color(0xFF59A8FF).withOpacity(0.3), blurRadius: 8)],
+                  boxShadow: [BoxShadow(color: Color(0xFF59A8FF).withOpacity(0.3), blurRadius: 8)],
                 ),
                 child: IconButton(
                   onPressed: _loading ? null : _send,
@@ -320,22 +331,22 @@ class _AssistantScreenState extends State<AssistantScreen> with TickerProviderSt
                             child: Container(width: 5, height: 5, decoration: const BoxDecoration(color: Color(0xFF59A8FF), shape: BoxShape.circle)),
                           ),
                           const SizedBox(width: 5),
-                          Text('${m.provider ?? ''}${m.model != null ? ' / ${m.model}' : ''}', style: const TextStyle(fontSize: 10, color: Color(0xFF5E6C88), fontFamily: 'Inter')),
+                          Text('${m.provider ?? ''}${m.model != null ? ' / ${m.model}' : ''}', style: GoogleFonts.inter(fontSize: 10, color: const Color(0xFF5E6C88))),
                         ],
                       ),
                     ),
                   // Content
                   if (isUser)
-                    Text(m.content, style: const TextStyle(fontSize: 14, height: 1.5, fontFamily: 'Inter'))
+                    Text(m.content, style: GoogleFonts.inter(fontSize: 14, height: 1.5))
                   else if (m.isStreaming && m.content.isEmpty)
                     const StreamingDots()
                   else
-                    MarkdownBody(data: m.content, shrinkWrap: true, styleSheet: MarkdownStyleSheet(p: const TextStyle(fontSize: 13, height: 1.6, color: Color(0xFFC0D0E8), fontFamily: 'Inter'))),
+                    MarkdownBody(data: m.content, shrinkWrap: true, styleSheet: MarkdownStyleSheet(p: GoogleFonts.inter(fontSize: 13, height: 1.6, color: const Color(0xFFC0D0E8)))),
                   // Streaming cursor
                   if (m.isStreaming && m.content.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 2),
-                      child: Text('|', style: const TextStyle(color: Color(0xFF59A8FF), fontWeight: FontWeight.w900, fontSize: 14, fontFamily: 'Inter')),
+                      child: Text('|', style: GoogleFonts.inter(color: const Color(0xFF59A8FF), fontWeight: FontWeight.w900, fontSize: 14)),
                     ),
                 ],
               ),
@@ -355,106 +366,4 @@ class _Msg {
   bool isStreaming;
 
   _Msg({required this.role, required this.content, this.provider, this.model, this.isStreaming = false});
-}
-
-extension _AssistantWelcome on _AssistantScreenState {
-  Widget _buildWelcome() {
-    final suggestions = [
-      (emoji: '📊', title: 'Газовый баланс', prompt: 'Сформируй отчёт по газовому балансу', color: AegisColors.accentBlue),
-      (emoji: '💰', title: 'Платежи', prompt: 'Анализ дебиторской задолженности', color: AegisColors.warning),
-      (emoji: '🔍', title: 'Риски', prompt: 'Прогноз рисков недопоставки газа', color: AegisColors.danger),
-      (emoji: '📈', title: 'Тарифы', prompt: 'Тарифный анализ с точкой безубыточности', color: AegisColors.success),
-      (emoji: '🔌', title: 'Коннекторы', prompt: 'Покажи статус всех коннекторов', color: AegisColors.accentPurple),
-      (emoji: '📝', title: 'Документы', prompt: 'Краткая сводка по последним документам', color: AegisColors.accentCyan),
-    ];
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const SizedBox(height: 12),
-          Center(
-            child: Container(
-              width: 76, height: 76,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(colors: [
-                  AegisColors.accentPurple.withOpacity(0.9),
-                  AegisColors.accentBlue.withOpacity(0.9),
-                ]),
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(color: AegisColors.accentPurple.withOpacity(0.4), blurRadius: 24, offset: const Offset(0, 8)),
-                ],
-              ),
-              child: const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 38),
-            ),
-          ),
-          const SizedBox(height: 18),
-          const Center(
-            child: Text('Чем могу помочь?',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: AegisColors.textPrimary, fontFamily: 'Inter', letterSpacing: -0.3)),
-          ),
-          const SizedBox(height: 6),
-          const Center(
-            child: Padding(
-              padding: EdgeInsets.symmetric(horizontal: 32),
-              child: Text('Выберите готовый запрос или сформулируйте свой',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 13, color: AegisColors.textTertiary, fontFamily: 'Inter', height: 1.5)),
-            ),
-          ),
-          const SizedBox(height: 22),
-          GridView.count(
-            crossAxisCount: 2,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            mainAxisSpacing: 10,
-            crossAxisSpacing: 10,
-            childAspectRatio: 1.65,
-            children: suggestions.map((sug) {
-              return Material(
-                color: Colors.transparent,
-                borderRadius: BorderRadius.circular(14),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(14),
-                  onTap: () { _ctrl.text = sug.prompt; _send(); },
-                  child: Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: AegisColors.bgCard,
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: AegisColors.border),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Container(
-                          width: 32, height: 32,
-                          decoration: BoxDecoration(
-                            color: sug.color.withOpacity(0.14),
-                            borderRadius: BorderRadius.circular(9),
-                            border: Border.all(color: sug.color.withOpacity(0.25)),
-                          ),
-                          alignment: Alignment.center,
-                          child: Text(sug.emoji, style: const TextStyle(fontSize: 16)),
-                        ),
-                        Text(sug.title,
-                            maxLines: 1, overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AegisColors.textPrimary, fontFamily: 'Inter')),
-                        Text(sug.prompt,
-                            maxLines: 2, overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 10.5, color: AegisColors.textTertiary, fontFamily: 'Inter', height: 1.35)),
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            }).toList(),
-          ),
-        ],
-      ),
-    );
-  }
 }
