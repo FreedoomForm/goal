@@ -30,6 +30,13 @@ jobs:
     defaults:
       run:
         working-directory: aegisops_app
+
+    env:
+      # Disable code signing — no certificate available, prevents winCodeSign download 504
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      # Allow unresolved references for optional tools
+      ELECTRON_BUILDER_ALLOW_UNRESOLVED_REFERENCES: 'true'
+
     steps:
       - uses: actions/checkout@v4
 
@@ -56,6 +63,7 @@ jobs:
         run: npm run ${{ matrix.script }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
       - name: List output
         shell: bash
