@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 ThemeData buildTheme() {
   const seed = Color(0xFF59A8FF);
@@ -23,7 +22,7 @@ ThemeData buildTheme() {
       secondary: accentPurple,
     ),
     scaffoldBackgroundColor: surface,
-    textTheme: GoogleFonts.interTextTheme(ThemeData.dark().textTheme),
+    textTheme: ThemeData.dark().textTheme.apply(fontFamily: 'Inter'),
     cardTheme: CardTheme(
       color: cardBg,
       elevation: 0,
@@ -42,7 +41,7 @@ ThemeData buildTheme() {
     navigationBarTheme: NavigationBarThemeData(
       backgroundColor: const Color(0xFF0F1830),
       indicatorColor: seed.withOpacity(0.15),
-      labelTextStyle: WidgetStatePropertyAll(GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w500)),
+      labelTextStyle: const WidgetStatePropertyAll(TextStyle(fontSize: 11, fontWeight: FontWeight.w500, fontFamily: 'Inter')),
       iconTheme: WidgetStatePropertyAll(const IconThemeData(size: 22)),
     ),
     inputDecorationTheme: InputDecorationTheme(
@@ -67,13 +66,13 @@ ThemeData buildTheme() {
         backgroundColor: seed,
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        textStyle: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 14),
+        textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14, fontFamily: 'Inter'),
       ),
     ),
     chipTheme: ChipThemeData(
       backgroundColor: Colors.white.withOpacity(0.06),
       side: const BorderSide(color: border),
-      labelStyle: GoogleFonts.inter(fontSize: 11, color: Colors.white70),
+      labelStyle: const TextStyle(fontSize: 11, color: Colors.white70, fontFamily: 'Inter'),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
     ),
@@ -228,7 +227,7 @@ class QuickActionChip extends StatelessWidget {
           border: Border.all(color: const Color(0xFF24304E)),
           borderRadius: BorderRadius.circular(20),
         ),
-        child: Text(label, style: GoogleFonts.inter(fontSize: 12, color: const Color(0xFF8EA1C9))),
+        child: Text(label, style: const TextStyle(fontSize: 12, color: Color(0xFF8EA1C9), fontFamily: 'Inter')),
       ),
     );
   }

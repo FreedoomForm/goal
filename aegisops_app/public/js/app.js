@@ -152,7 +152,6 @@ async function renderPage(page) {
       case 'modules': await renderModules(container); break;
       case 'assistant': await renderAssistantEnhanced(container); break;
       case 'ai-engine': await renderAIEngine(container); break;
-      case 'assistant': await renderAssistantEnhanced(container); break;
       case 'documents': await renderDocuments(container); break;
       case 'training': await renderTraining(container); break;
       case 'etl': await renderETL(container); break;
@@ -731,7 +730,7 @@ async function renderAssistant(container) {
     chatMessages.innerHTML += `<div class="chat-message ai" id="chatLoading">
       <div class="chat-avatar">🤖</div>
       <div class="chat-bubble">
-        <span class="provider-tag">ollama${model ? ' / ' + model : ''}</span>
+        <span class="provider-tag">ollama</span>
         <div class="streaming-dots"><span></span><span></span><span></span></div>
       </div>
     </div>`;

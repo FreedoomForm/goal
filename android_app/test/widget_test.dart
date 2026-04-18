@@ -3,12 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aegisops_mobile/src/theme.dart';
 
-import 'package:google_fonts/google_fonts.dart';
-
 void main() {
-  setUpAll(() {
-    GoogleFonts.config.allowRuntimeFetching = false;
-  });
   test('theme builds without errors', () {
     final t = buildTheme();
     expect(t.useMaterial3, isTrue);

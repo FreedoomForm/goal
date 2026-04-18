@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
-import 'package:google_fonts/google_fonts.dart';
 import '../services/api_client.dart';
 import '../theme.dart';
 
@@ -145,7 +144,7 @@ class _AssistantScreenState extends State<AssistantScreen> with TickerProviderSt
                 value: _selectedModel,
                 underline: const SizedBox(),
                 icon: const Icon(Icons.arrow_drop_down, color: Color(0xFF59A8FF), size: 18),
-                style: GoogleFonts.inter(color: const Color(0xFF59A8FF), fontSize: 11),
+                style: const TextStyle(color: Color(0xFF59A8FF), fontSize: 11, fontFamily: 'Inter'),
                 items: _models.map((m) => DropdownMenuItem(
                   value: m['name'] as String,
                   child: Text(m['name'] as String, style: const TextStyle(fontSize: 11)),
@@ -186,13 +185,13 @@ class _AssistantScreenState extends State<AssistantScreen> with TickerProviderSt
                     child: Container(width: 6, height: 6, decoration: const BoxDecoration(color: Color(0xFF59A8FF), shape: BoxShape.circle, boxShadow: [BoxShadow(color: Color(0xFF59A8FF), blurRadius: 6)])),
                   ),
                   const SizedBox(width: 8),
-                  Text('$_selectedModel', style: GoogleFonts.inter(fontSize: 11, color: const Color(0xFF59A8FF))),
+                  Text('$_selectedModel', style: const TextStyle(fontSize: 11, color: Color(0xFF59A8FF), fontFamily: 'Inter')),
                   const Spacer(),
                   if (_useStream)
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(color: const Color(0xFF23C483).withOpacity(0.15), borderRadius: BorderRadius.circular(6)),
-                      child: Text('STREAM', style: GoogleFonts.inter(fontSize: 9, color: const Color(0xFF23C483), fontWeight: FontWeight.w700)),
+                      child: Text('STREAM', style: const TextStyle(fontSize: 9, color: Color(0xFF23C483), fontWeight: FontWeight.w700, fontFamily: 'Inter')),
                     ),
                 ],
               ),
@@ -233,10 +232,10 @@ class _AssistantScreenState extends State<AssistantScreen> with TickerProviderSt
                 ),
                 child: TextField(
                   controller: _ctrl, minLines: 1, maxLines: 4,
-                  style: GoogleFonts.inter(fontSize: 14),
+                  style: const TextStyle(fontSize: 14, fontFamily: 'Inter'),
                   decoration: InputDecoration(
                     hintText: 'Задайте вопрос AI…',
-                    hintStyle: GoogleFonts.inter(color: const Color(0xFF5E6C88)),
+                    hintStyle: const TextStyle(color: Color(0xFF5E6C88), fontFamily: 'Inter'),
                     border: InputBorder.none,
                     contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   ),
@@ -320,22 +319,22 @@ class _AssistantScreenState extends State<AssistantScreen> with TickerProviderSt
                             child: Container(width: 5, height: 5, decoration: const BoxDecoration(color: Color(0xFF59A8FF), shape: BoxShape.circle)),
                           ),
                           const SizedBox(width: 5),
-                          Text('${m.provider ?? ''}${m.model != null ? ' / ${m.model}' : ''}', style: GoogleFonts.inter(fontSize: 10, color: const Color(0xFF5E6C88))),
+                          Text('${m.provider ?? ''}${m.model != null ? ' / ${m.model}' : ''}', style: const TextStyle(fontSize: 10, color: Color(0xFF5E6C88), fontFamily: 'Inter')),
                         ],
                       ),
                     ),
                   // Content
                   if (isUser)
-                    Text(m.content, style: GoogleFonts.inter(fontSize: 14, height: 1.5))
+                    Text(m.content, style: const TextStyle(fontSize: 14, height: 1.5, fontFamily: 'Inter'))
                   else if (m.isStreaming && m.content.isEmpty)
                     const StreamingDots()
                   else
-                    MarkdownBody(data: m.content, shrinkWrap: true, styleSheet: MarkdownStyleSheet(p: GoogleFonts.inter(fontSize: 13, height: 1.6, color: const Color(0xFFC0D0E8)))),
+                    MarkdownBody(data: m.content, shrinkWrap: true, styleSheet: MarkdownStyleSheet(p: const TextStyle(fontSize: 13, height: 1.6, color: Color(0xFFC0D0E8), fontFamily: 'Inter'))),
                   // Streaming cursor
                   if (m.isStreaming && m.content.isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(top: 2),
-                      child: Text('|', style: GoogleFonts.inter(color: const Color(0xFF59A8FF), fontWeight: FontWeight.w900, fontSize: 14)),
+                      child: Text('|', style: const TextStyle(color: Color(0xFF59A8FF), fontWeight: FontWeight.w900, fontSize: 14, fontFamily: 'Inter')),
                     ),
                 ],
               ),

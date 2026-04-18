@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:go_router/go_router.dart';
 import '../services/api_client.dart';
 import '../theme.dart';
 
@@ -56,8 +56,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ? Center(child: Padding(padding: const EdgeInsets.all(20), child: Text(_error!, style: const TextStyle(color: Colors.redAccent))))
               : RefreshIndicator(onRefresh: _load, color: const Color(0xFF59A8FF), child: _buildContent()),
       floatingActionButton: FloatingActionButton(
-        onPressed: () => Navigator.of(context).pushNamed('/assistant'),
-        gradient: const LinearGradient(colors: [Color(0xFF59A8FF), Color(0xFF7C5CFF)]),
+        onPressed: () => context.go('/assistant'),
+        backgroundColor: const Color(0xFF59A8FF),
         child: const Icon(Icons.chat_bubble_outline, color: Colors.white),
       ),
     );
@@ -92,12 +92,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   gradient: const LinearGradient(colors: [Color(0xFF59A8FF), Color(0xFF7C5CFF)]),
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: Text('⚡ On-prem • 100% Локально', style: GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w600, color: Colors.white)),
+                child: Text('⚡ On-prem • 100% Локально', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: Colors.white, fontFamily: 'Inter')),
               ),
               const SizedBox(height: 12),
-              Text(hero['title']?.toString() ?? 'AegisOps', style: GoogleFonts.inter(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.white)),
+              Text(hero['title']?.toString() ?? 'AegisOps', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.white, fontFamily: 'Inter')),
               const SizedBox(height: 4),
-              Text(hero['subtitle']?.toString() ?? '', style: GoogleFonts.inter(fontSize: 13, color: const Color(0xFF8EA1C9), height: 1.5)),
+              Text(hero['subtitle']?.toString() ?? '', style: const TextStyle(fontSize: 13, color: Color(0xFF8EA1C9), height: 1.5, fontFamily: 'Inter')),
             ],
           ),
         ),
@@ -156,8 +156,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
                 const SizedBox(width: 12),
                 Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(item.label, style: GoogleFonts.inter(color: const Color(0xFF8EA1C9), fontSize: 11, fontWeight: FontWeight.w500)),
-                  Text(item.value.toString(), style: GoogleFonts.inter(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.white)),
+                  Text(item.label, style: const TextStyle(color: Color(0xFF8EA1C9), fontSize: 11, fontWeight: FontWeight.w500, fontFamily: 'Inter')),
+                  Text(item.value.toString(), style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.white, fontFamily: 'Inter')),
                 ])),
               ]),
             ),
@@ -197,9 +197,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
               Expanded(child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(s['name']?.toString() ?? '', style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 14)),
+                  Text(s['name']?.toString() ?? '', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, fontFamily: 'Inter')),
                   const SizedBox(height: 2),
-                  Text(s['objective']?.toString() ?? '', maxLines: 1, overflow: TextOverflow.ellipsis, style: GoogleFonts.inter(color: const Color(0xFF8EA1C9), fontSize: 11)),
+                  Text(s['objective']?.toString() ?? '', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Color(0xFF8EA1C9), fontSize: 11, fontFamily: 'Inter')),
                 ],
               )),
               PulseDot(color: enabled ? const Color(0xFF23C483) : const Color(0xFF5E6C88)),
@@ -226,9 +226,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
           Expanded(child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(m['name']?.toString() ?? '', style: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 14)),
+              Text(m['name']?.toString() ?? '', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, fontFamily: 'Inter')),
               const SizedBox(height: 2),
-              Text(m['description']?.toString() ?? '', maxLines: 2, overflow: TextOverflow.ellipsis, style: GoogleFonts.inter(color: const Color(0xFF8EA1C9), fontSize: 12)),
+              Text(m['description']?.toString() ?? '', maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Color(0xFF8EA1C9), fontSize: 12, fontFamily: 'Inter')),
             ],
           )),
           Container(
@@ -237,7 +237,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               color: const Color(0xFF23C483).withOpacity(0.12),
               borderRadius: BorderRadius.circular(6),
             ),
-            child: Text(m['status']?.toString() ?? 'active', style: GoogleFonts.inter(fontSize: 10, color: const Color(0xFF23C483), fontWeight: FontWeight.w600)),
+            child: Text(m['status']?.toString() ?? 'active', style: const TextStyle(fontSize: 10, color: Color(0xFF23C483), fontWeight: FontWeight.w600, fontFamily: 'Inter')),
           ),
         ]),
       ),
@@ -259,7 +259,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _sectionTitle(String t) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-    child: Text(t, style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w700, color: const Color(0xFFB2D6FF), letterSpacing: 0.5)),
+    child: Text(t, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFFB2D6FF), letterSpacing: 0.5, fontFamily: 'Inter')),
   );
 }
 
