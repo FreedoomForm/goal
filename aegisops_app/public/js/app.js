@@ -68,7 +68,6 @@ const typeIcons = {
   email: '📧',
   smtp: '📧',
   webhook: '🔔',
-  tekinsoft: '🌐',
 };
 
 const typeNames = {
@@ -90,7 +89,6 @@ const typeNames = {
   email: 'Email / SMTP',
   smtp: 'SMTP',
   webhook: 'Webhook',
-  tekinsoft: 'Tekinsoft',
 };
 
 const categoryColors = {

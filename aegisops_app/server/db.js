@@ -27,6 +27,16 @@ function saveDB() {
   fs.writeFileSync(dbPath, buffer);
 }
 
+// Debounced save — coalesces multiple writes within a short window
+let _saveTimer = null;
+function saveDBDebounced() {
+  if (_saveTimer) clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(() => {
+    saveDB();
+    _saveTimer = null;
+  }, 2000); // Save at most once every 2 seconds
+}
+
 function nowISO() {
   return new Date().toISOString().replace('T', ' ').slice(0, 19);
 }
@@ -201,7 +211,7 @@ function queryOne(sql, params = []) {
 /** Helper: run INSERT/UPDATE/DELETE */
 function runSQL(sql, params = []) {
   db.run(sql, params);
-  saveDB();
+  saveDBDebounced(); // Debounced — saves at most once every 2 seconds
   const result = db.exec("SELECT last_insert_rowid() as id");
   return { lastInsertRowid: result.length > 0 ? result[0].values[0][0] : 0 };
 }
@@ -275,4 +285,4 @@ function seedData() {
   console.log('[AegisOps DB] Seeded with data');
 }
 
-module.exports = { initDB, getDB, queryAll, queryOne, runSQL, saveDB, nowISO };
+module.exports = { initDB, getDB, queryAll, queryOne, runSQL, saveDB, saveDBDebounced, nowISO };

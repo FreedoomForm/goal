@@ -10,6 +10,8 @@ const { RestConnector } = require('./rest');
 const { EmailConnector } = require('./email');
 const { WebhookConnector } = require('./webhook');
 const { DatabaseConnector } = require('./database');
+const { MqttConnector } = require('./mqtt');
+const { AskugConnector } = require('./askug');
 
 /** Map of connector type → class */
 const CONNECTOR_CLASSES = {
@@ -29,6 +31,11 @@ const CONNECTOR_CLASSES = {
   email: EmailConnector,
   smtp: EmailConnector,
   webhook: WebhookConnector,
+  mqtt: MqttConnector,
+  iot: MqttConnector,
+  askug: AskugConnector,
+  egaz: AskugConnector,
+  ugaz: AskugConnector,
 };
 
 /**
@@ -62,6 +69,9 @@ function getConnectorTypes() {
     { type: 'database', name: 'Database (SQL)', description: 'Прямое подключение к БД: PostgreSQL, MySQL, MSSQL', icon: '🗄️', protocol: 'SQL' },
     { type: 'email', name: 'Email / SMTP', description: 'Отправка email через SMTP', icon: '📧', protocol: 'SMTP' },
     { type: 'webhook', name: 'Webhook', description: 'Исходящие/входящие webhook (Slack, Teams, custom)', icon: '🔗', protocol: 'HTTP' },
+    { type: 'askug', name: 'АСКУГ / UGaz', description: 'Автоматизированная система контроля и учета газа (АСКУГ, UGaz, E-GAZ)', icon: '💳', protocol: 'REST' },
+    { type: 'mqtt', name: 'MQTT / IoT', description: 'IoT-сенсоры через MQTT брокер (EMQX, HiveMQ)', icon: '📡', protocol: 'MQTT' },
+    { type: 'iot', name: 'IoT Sensor', description: 'IoT-датчики (газ, температура, расход) через MQTT', icon: '🌡️', protocol: 'MQTT' },
   ];
 }
 

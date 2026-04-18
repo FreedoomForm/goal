@@ -488,6 +488,18 @@ async function renderAssistantEnhanced(container) {
           body: JSON.stringify({ prompt, model }),
         });
 
+        // If streaming endpoint fails, fall back to non-streaming
+        if (!response.ok || !response.body) {
+          const result = await api('/api/assistant', {
+            method: 'POST',
+            body: JSON.stringify({ prompt, model: model || undefined }),
+          });
+          state.chatHistory.push({ role: 'ai', content: result.content, provider: result.provider, model: result.model });
+          chatMessages.innerHTML = state.chatHistory.map(msg => renderChatMessage(msg)).join('');
+          chatMessages.scrollTop = chatMessages.scrollHeight;
+          return;
+        }
+
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let fullContent = '';

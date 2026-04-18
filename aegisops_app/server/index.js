@@ -7,7 +7,9 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const { spawn, execSync } = require('child_process');
 const { v4: uuidv4 } = require('uuid');
+const nodeCron = require('node-cron');
 
 const { initDB, getDB, queryAll, queryOne, runSQL, saveDB, nowISO } = require('./db');
 const { createConnector, getConnectorTypes } = require('./connectors');
@@ -25,6 +27,8 @@ const REPORTS_DIR_DEFAULT = path.join(__dirname, '..', 'generated_reports');
 let REPORTS_DIR = REPORTS_DIR_DEFAULT;
 let DATA_DIR = path.join(__dirname, '..', 'data');
 
+const VERSION = '1.1.0';
+
 function uid() { return uuidv4().replace(/-/g, '').slice(0, 12); }
 
 function logEvent(eventType, payload) {
@@ -40,23 +44,24 @@ function safeJSON(str, fallback) {
 }
 
 /* ────────── AI layer (uses real Ollama connector) ────────── */
-async function askAI(prompt) {
+async function askAI(prompt, model) {
   // Find Ollama connector
   const ollamaRow = queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
   if (ollamaRow) {
     try {
       const connector = createConnector(ollamaRow);
+      const useModel = model || activeModel || connector.model;
       const result = await connector.chat([
         { role: 'system', content: 'Ты enterprise AI-аналитик для газовых компаний и банков. Отвечай структурированно, с цифрами. Русский язык.' },
         { role: 'user', content: prompt },
-      ]);
+      ], { model: useModel });
       return result; // { provider: 'ollama', model, content }
     } catch (err) {
       // Ollama not available — fall through to fallback
     }
   }
   // Fallback: built-in analyzer
-  return { provider: 'fallback', model: 'built-in', content: generateFallbackAnalysis(prompt) };
+  return { provider: 'fallback', model: model || 'built-in', content: generateFallbackAnalysis(prompt) };
 }
 
 function generateFallbackAnalysis(prompt) {
@@ -118,7 +123,7 @@ function generateHTMLReport(scenario, aiResult, collectedData) {
     </div>
     <div class="card"><h2>🤖 Аналитический вывод</h2><pre>${aiResult.content}</pre></div>
     <div class="card"><h2>📡 Данные коннекторов</h2>${connectorSections || '<p style="color:#8ea1c9">Нет данных</p>'}</div>
-    <div class="footer">AegisOps Local AI v1.0.0 • Конфиденциально • ${now}</div>
+    <div class="footer">AegisOps Local AI v${VERSION} • Конфиденциально • ${now}</div>
   </div>
 </body>
 </html>`;
@@ -181,7 +186,7 @@ function createApp() {
     const c = queryOne('SELECT COUNT(*) as c FROM connectors');
     const s = queryOne('SELECT COUNT(*) as c FROM scenarios');
     const d = queryOne('SELECT COUNT(*) as c FROM documents');
-    res.json({ status: 'ok', product: 'AegisOps Local AI', version: '1.0.0', connectors: c?.c || 0, scenarios: s?.c || 0, documents: d?.c || 0, ts: nowISO() });
+    res.json({ status: 'ok', product: 'AegisOps Local AI', version: VERSION, connectors: c?.c || 0, scenarios: s?.c || 0, documents: d?.c || 0, ts: nowISO() });
   });
 
   /* ── Dashboard ── */
@@ -216,6 +221,7 @@ function createApp() {
 
   app.post('/api/connectors', (req, res) => {
     const { name, type, base_url, auth_mode, auth_payload, config, enabled } = req.body;
+    if (!name || !type) return res.status(400).json({ error: 'name and type are required' });
     const now = nowISO();
     const result = runSQL(`INSERT INTO connectors (name, type, base_url, auth_mode, auth_payload, config, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [name, type, base_url || '', auth_mode || 'none', JSON.stringify(auth_payload || {}), JSON.stringify(config || {}), enabled !== false ? 1 : 0, now, now]);
@@ -304,6 +310,15 @@ function createApp() {
     res.json({ ok: true });
   });
 
+  app.put('/api/scenarios/:id', (req, res) => {
+    const { name, category, cron_expr, connector_ids, objective, delivery_channel, config, enabled } = req.body;
+    runSQL(`UPDATE scenarios SET name=?, category=?, cron_expr=?, connector_ids=?, objective=?, delivery_channel=?, config=?, enabled=?, updated_at=? WHERE id=?`,
+      [name, category, cron_expr || '', JSON.stringify(connector_ids || []), objective, delivery_channel || 'none', JSON.stringify(config || {}), enabled ? 1 : 0, nowISO(), req.params.id]);
+    const row = queryOne('SELECT * FROM scenarios WHERE id = ?', [req.params.id]);
+    logEvent('scenario.updated', { id: req.params.id });
+    res.json(row);
+  });
+
   /* ── Run scenario (REAL connectors) ── */
   app.post('/api/scenarios/:id/run', async (req, res) => {
     const row = queryOne('SELECT * FROM scenarios WHERE id = ?', [req.params.id]);
@@ -379,11 +394,389 @@ function createApp() {
 
   /* ── AI Assistant (real Ollama) ── */
   app.post('/api/assistant', async (req, res) => {
-    const { prompt } = req.body;
+    const { prompt, model } = req.body;
     if (!prompt?.trim()) return res.status(400).json({ error: 'prompt required' });
-    const result = await askAI(prompt);
+    const result = await askAI(prompt, model);
     logEvent('assistant.asked', { prompt: prompt.slice(0, 200), provider: result.provider });
     res.json(result);
+  });
+
+  /* ── AI Assistant Streaming (SSE) ── */
+  app.post('/api/assistant/stream', async (req, res) => {
+    const { prompt, model } = req.body;
+    if (!prompt?.trim()) return res.status(400).json({ error: 'prompt required' });
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const ollamaRow = queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
+    if (!ollamaRow) {
+      // No Ollama — fallback to non-streaming
+      const result = await askAI(prompt, model);
+      res.write(`event: token\ndata: ${JSON.stringify({ content: result.content, model: result.model })}\n\n`);
+      res.write(`event: done\ndata: ${JSON.stringify({ content: result.content, model: result.model, provider: result.provider, done: true })}\n\n`);
+      res.end();
+      return;
+    }
+
+    try {
+      const connector = createConnector(ollamaRow);
+      const useModel = model || connector.model;
+      const ollamaUrl = connector.baseUrl;
+
+      const response = await fetch(`${ollamaUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: useModel,
+          stream: true,
+          messages: [
+            { role: 'system', content: 'Ты enterprise AI-аналитик для газовых компаний. Отвечай структурированно, с цифрами. Русский язык.' },
+            { role: 'user', content: prompt },
+          ],
+        }),
+      });
+
+      if (!response.ok) {
+        // Ollama error — fallback
+        const result = await askAI(prompt, model);
+        res.write(`event: token\ndata: ${JSON.stringify({ content: result.content })}\n\n`);
+        res.write(`event: done\ndata: ${JSON.stringify({ content: result.content, model: result.model, provider: result.provider, done: true })}\n\n`);
+        res.end();
+        return;
+      }
+
+      const decoder = new (require('string_decoder')).StringDecoder('utf-8');
+      let buffer = '';
+      let fullContent = '';
+
+      for await (const chunk of response.body) {
+        buffer += decoder.write(chunk);
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const data = JSON.parse(line);
+            if (data.message?.content) {
+              fullContent += data.message.content;
+              res.write(`event: token\ndata: ${JSON.stringify({ content: data.message.content, model: useModel })}\n\n`);
+            }
+            if (data.done) {
+              res.write(`event: done\ndata: ${JSON.stringify({ content: fullContent, model: useModel, provider: 'ollama', done: true })}\n\n`);
+            }
+          } catch {}
+        }
+      }
+      // If stream ended without done signal
+      if (fullContent) {
+        res.write(`event: done\ndata: ${JSON.stringify({ content: fullContent, model: useModel, provider: 'ollama', done: true })}\n\n`);
+      }
+      res.end();
+    } catch (err) {
+      // Streaming failed — try non-streaming fallback
+      try {
+        const result = await askAI(prompt, model);
+        res.write(`event: token\ndata: ${JSON.stringify({ content: result.content })}\n\n`);
+        res.write(`event: done\ndata: ${JSON.stringify({ content: result.content, model: result.model, provider: result.provider, done: true })}\n\n`);
+      } catch (fallbackErr) {
+        res.write(`event: error\ndata: ${JSON.stringify({ error: fallbackErr.message })}\n\n`);
+      }
+      res.end();
+    }
+  });
+
+  /* ── AI Engine Management ── */
+  let ollamaProcess = null;
+  let openclawProcess = null;
+  let activeModel = null;
+  let activeProvider = 'ollama';
+  const pullProgress = new Map();
+
+  // Helper: check if Ollama is installed
+  function isOllamaInstalled() {
+    try { execSync('which ollama 2>/dev/null || where ollama 2>nul', { encoding: 'utf8' }); return true; }
+    catch { return false; }
+  }
+
+  // Helper: check if Ollama is running
+  async function isOllamaRunning() {
+    try {
+      const ollamaRow = queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
+      const url = ollamaRow?.base_url || 'http://127.0.0.1:11434';
+      const res = await fetch(`${url}/api/tags`);
+      return res.ok;
+    } catch { return false; }
+  }
+
+  // Helper: get Ollama models
+  async function getOllamaModels() {
+    try {
+      const ollamaRow = queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
+      const url = ollamaRow?.base_url || 'http://127.0.0.1:11434';
+      const res = await fetch(`${url}/api/tags`);
+      const data = await res.json();
+      return (data.models || []).map(m => ({
+        name: m.name,
+        size: m.size,
+        parameterSize: m.details?.parameter_size || '',
+        family: m.details?.family || '',
+        quantization: m.details?.quantization_level || '',
+        modified: m.modified_at,
+      }));
+    } catch { return []; }
+  }
+
+  // Helper: get Ollama version
+  async function getOllamaVersion() {
+    try {
+      const ollamaRow = queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
+      const url = ollamaRow?.base_url || 'http://127.0.0.1:11434';
+      const res = await fetch(`${url}/api/version`);
+      const data = await res.json();
+      return data.version || 'unknown';
+    } catch { return null; }
+  }
+
+  // Recommended models for gas sector
+  const RECOMMENDED_MODELS = [
+    { name: 'qwen2.5:7b-instruct', desc: 'Оптимальная модель для газового сектора (7B, русский язык)', size: '4.4 GB', recommended: true },
+    { name: 'qwen2.5:14b-instruct', desc: 'Высокое качество анализа (14B, требуется 10+ GB VRAM)', size: '8.7 GB', recommended: false },
+    { name: 'llama3.1:8b-instruct', desc: 'Универсальная модель для анализа (8B)', size: '4.7 GB', recommended: false },
+    { name: 'gemma3:4b', desc: 'Компактная модель для быстрого инференса (4B)', size: '3.3 GB', recommended: false },
+    { name: 'mistral:7b-instruct', desc: 'Хорошая для структурированных задач (7B)', size: '4.1 GB', recommended: false },
+    { name: 'nomic-embed-text', desc: 'Модель эмбеддингов для поиска по документам', size: '274 MB', recommended: false },
+  ];
+
+  // GET /api/ai/status
+  app.get('/api/ai/status', async (req, res) => {
+    try {
+      const ollamaRunning = await isOllamaRunning();
+      const ollamaInstalled = isOllamaInstalled();
+      const ollamaModels = ollamaRunning ? await getOllamaModels() : [];
+      const ollamaVersion = ollamaRunning ? await getOllamaVersion() : null;
+
+      // Check if active model is still available
+      if (activeModel && !ollamaModels.find(m => m.name === activeModel)) {
+        activeModel = ollamaModels.length > 0 ? ollamaModels[0].name : null;
+      } else if (!activeModel && ollamaModels.length > 0) {
+        activeModel = ollamaModels[0].name;
+      }
+
+      // Load saved active model from settings
+      if (!activeModel) {
+        const savedModel = queryOne("SELECT value FROM settings WHERE key='ollama_model'");
+        if (savedModel?.value) activeModel = savedModel.value;
+      }
+
+      res.json({
+        ollama: {
+          running: ollamaRunning,
+          installed: ollamaInstalled,
+          version: ollamaVersion,
+          models: ollamaModels,
+          baseUrl: queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1")?.base_url || 'http://127.0.0.1:11434',
+        },
+        openclaw: {
+          running: !!openclawProcess,
+          installed: false, // TODO: implement OpenClaw install check
+        },
+        activeModel,
+        activeProvider,
+        recommended: RECOMMENDED_MODELS.map(m => ({
+          ...m,
+          installed: ollamaModels.some(om => om.name === m.name || om.name.startsWith(m.name.split(':')[0])),
+        })),
+      });
+    } catch (err) {
+      res.json({
+        ollama: { running: false, installed: false, models: [], baseUrl: 'http://127.0.0.1:11434' },
+        openclaw: { running: false, installed: false },
+        activeModel: null, activeProvider: 'ollama', recommended: RECOMMENDED_MODELS,
+        error: err.message,
+      });
+    }
+  });
+
+  // POST /api/ai/ensure — auto-start everything
+  app.post('/api/ai/ensure', async (req, res) => {
+    const result = { ollama: {}, openclaw: {} };
+
+    // Ensure Ollama
+    if (!await isOllamaRunning()) {
+      if (!isOllamaInstalled()) {
+        try {
+          // Auto-install Ollama
+          if (process.platform === 'win32') {
+            execSync('winget install Ollama.Ollama --accept-source-agreements --accept-package-agreements', { timeout: 300000 });
+          } else if (process.platform === 'darwin') {
+            execSync('brew install ollama', { timeout: 300000 });
+          } else {
+            execSync('curl -fsSL https://ollama.com/install.sh | sh', { timeout: 300000 });
+          }
+          result.ollama.installed = true;
+        } catch (err) {
+          result.ollama.installError = err.message;
+        }
+      }
+      try {
+        ollamaProcess = spawn('ollama', ['serve'], { detached: true, stdio: 'ignore' });
+        ollamaProcess.unref();
+        // Wait for Ollama to start
+        await new Promise(r => setTimeout(r, 3000));
+        result.ollama.started = true;
+      } catch (err) {
+        result.ollama.startError = err.message;
+      }
+    }
+    result.ollama.running = await isOllamaRunning();
+
+    // OpenClaw — placeholder for now
+    result.openclaw.running = !!openclawProcess;
+
+    logEvent('ai.ensured', result);
+    res.json(result);
+  });
+
+  // POST /api/ai/ollama/start
+  app.post('/api/ai/ollama/start', async (req, res) => {
+    try {
+      if (await isOllamaRunning()) {
+        return res.json({ status: 'already_running' });
+      }
+      ollamaProcess = spawn('ollama', ['serve'], { detached: true, stdio: 'ignore' });
+      ollamaProcess.unref();
+      await new Promise(r => setTimeout(r, 3000));
+      const running = await isOllamaRunning();
+      logEvent('ai.ollama.started', { running });
+      res.json({ status: running ? 'started' : 'failed' });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/ai/ollama/stop
+  app.post('/api/ai/ollama/stop', async (req, res) => {
+    try {
+      if (ollamaProcess) { ollamaProcess.kill(); ollamaProcess = null; }
+      // Also try to kill any running ollama serve
+      try { execSync('pkill -f "ollama serve" 2>/dev/null || taskkill /F /IM ollama.exe 2>nul'); } catch {}
+      logEvent('ai.ollama.stopped', {});
+      res.json({ status: 'stopped' });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/ai/ollama/install
+  app.post('/api/ai/ollama/install', async (req, res) => {
+    try {
+      if (process.platform === 'win32') {
+        execSync('winget install Ollama.Ollama --accept-source-agreements --accept-package-agreements', { timeout: 300000 });
+      } else if (process.platform === 'darwin') {
+        execSync('brew install ollama', { timeout: 300000 });
+      } else {
+        execSync('curl -fsSL https://ollama.com/install.sh | sh', { timeout: 300000 });
+      }
+      logEvent('ai.ollama.installed', {});
+      res.json({ status: 'installed' });
+    } catch (err) {
+      res.status(500).json({ error: err.message, hint: 'Install manually from https://ollama.com' });
+    }
+  });
+
+  // POST /api/ai/openclaw/start
+  app.post('/api/ai/openclaw/start', async (req, res) => {
+    // OpenClaw is a future feature — return placeholder
+    res.json({ status: 'not_implemented', message: 'OpenClaw MCP agent will be available in a future update' });
+  });
+
+  // POST /api/ai/openclaw/stop
+  app.post('/api/ai/openclaw/stop', async (req, res) => {
+    if (openclawProcess) { openclawProcess.kill(); openclawProcess = null; }
+    res.json({ status: 'stopped' });
+  });
+
+  // POST /api/ai/openclaw/install
+  app.post('/api/ai/openclaw/install', async (req, res) => {
+    res.json({ status: 'not_implemented', message: 'OpenClaw installation will be available in a future update' });
+  });
+
+  // POST /api/ai/openclaw/configure
+  app.post('/api/ai/openclaw/configure', async (req, res) => {
+    res.json({ status: 'not_implemented', config: { defaultModel: activeModel } });
+  });
+
+  // POST /api/ai/models/select — set active model
+  app.post('/api/ai/models/select', async (req, res) => {
+    const { model, provider } = req.body;
+    if (!model) return res.status(400).json({ error: 'model required' });
+    activeModel = model;
+    activeProvider = provider || 'ollama';
+    // Persist to settings
+    runSQL('INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)',
+      ['ollama_model', model, nowISO()]);
+    logEvent('ai.model.selected', { model, provider: activeProvider });
+    res.json({ status: 'ok', activeModel, activeProvider });
+  });
+
+  // POST /api/ai/models/pull/:model — start pulling a model
+  app.post('/api/ai/models/pull/:model', async (req, res) => {
+    const model = req.params.model;
+    if (!model) return res.status(400).json({ error: 'model name required' });
+
+    // Start pull in background
+    pullProgress.set(model, { status: 'pulling', progress: 0, statusText: 'Starting download...' });
+    logEvent('ai.model.pull_started', { model });
+
+    // Fire and forget the pull process
+    const pullProc = spawn('ollama', ['pull', model], { stdio: 'pipe' });
+    pullProc.stdout?.on('data', (data) => {
+      const text = data.toString();
+      const match = text.match(/(\d+)%/);
+      if (match) {
+        pullProgress.set(model, { status: 'pulling', progress: parseInt(match[1]), statusText: `Downloading ${match[1]}%` });
+      }
+    });
+    pullProc.on('close', (code) => {
+      if (code === 0) {
+        pullProgress.set(model, { status: 'completed', progress: 100, statusText: 'Download complete' });
+        logEvent('ai.model.pulled', { model, success: true });
+      } else {
+        pullProgress.set(model, { status: 'failed', progress: 0, statusText: 'Download failed', error: `Exit code ${code}` });
+        logEvent('ai.model.pulled', { model, success: false, code });
+      }
+    });
+    pullProc.on('error', (err) => {
+      pullProgress.set(model, { status: 'failed', progress: 0, statusText: 'Download failed', error: err.message });
+    });
+
+    res.json({ status: 'pulling', model });
+  });
+
+  // GET /api/ai/models/pull-status
+  app.get('/api/ai/models/pull-status', (req, res) => {
+    const result = {};
+    for (const [model, progress] of pullProgress) {
+      result[model] = progress;
+    }
+    res.json(result);
+  });
+
+  // DELETE /api/ai/models/:model — delete a model
+  app.delete('/api/ai/models/:model', async (req, res) => {
+    const model = req.params.model;
+    try {
+      execSync(`ollama rm ${model}`, { timeout: 60000 });
+      if (activeModel === model) activeModel = null;
+      logEvent('ai.model.deleted', { model });
+      res.json({ status: 'deleted', model });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   /* ── Module analytics (real AI) ── */
