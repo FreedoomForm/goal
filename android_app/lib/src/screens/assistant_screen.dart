@@ -64,7 +64,7 @@ class _AssistantScreenState extends State<AssistantScreen> with TickerProviderSt
   Future<void> _sendNormal(String prompt) async {
     try {
       final body = {'prompt': prompt};
-      if (_selectedModel != null) body['model'] = _selectedModel;
+      if (_selectedModel != null) body['model'] = _selectedModel!;
       final r = await ApiClient.instance.postJson('/api/assistant', body);
       setState(() { _messages.add(_Msg(role: 'ai', content: r['content']?.toString() ?? '', provider: r['provider']?.toString(), model: r['model']?.toString())); });
     } catch (e) {
@@ -244,13 +244,13 @@ class _AssistantScreenState extends State<AssistantScreen> with TickerProviderSt
               )),
               const SizedBox(width: 8),
               Container(
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(colors: [Color(0xFF59A8FF), Color(0xFF7C5CFF)]),
-                  borderRadius: BorderRadius.only(
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(colors: [Color(0xFF59A8FF), Color(0xFF7C5CFF)]),
+                  borderRadius: const BorderRadius.only(
                     topLeft: Radius.circular(16), bottomLeft: Radius.circular(16),
                     topRight: Radius.circular(20), bottomRight: Radius.circular(20),
                   ),
-                  boxShadow: [BoxShadow(color: Color(0xFF59A8FF).withOpacity(0.3), blurRadius: 8)],
+                  boxShadow: [BoxShadow(color: const Color(0xFF59A8FF).withOpacity(0.3), blurRadius: 8)],
                 ),
                 child: IconButton(
                   onPressed: _loading ? null : _send,
