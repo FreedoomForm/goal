@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AegisOps Local AI</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">A</div>
+        <div>
+          <h1>AegisOps</h1>
+          <p>Local AI for Enterprise</p>
+        </div>
+      </div>
+      <nav class="nav">
+        <a href="#overview">Обзор</a>
+        <a href="#connectors">Коннекторы</a>
+        <a href="#scenarios">Сценарии</a>
+        <a href="#assistant">AI-Ассистент</a>
+        <a href="#documents">Документы</a>
+        <a href="#audit">Аудит</a>
+      </nav>
+      <div class="sidebar-card">
+        <h3>Ключевая идея</h3>
+        <p>Локальная AI-платформа, которая связывает модели, данные и enterprise-системы в единый контур автоматизации.</p>
+      </div>
+    </aside>
+
+    <main class="main">
+      <section class="hero card" id="overview">
+        <div>
+          <span class="pill">On-prem • Android-ready • Windows-ready</span>
+          <h2 id="heroTitle">Загрузка…</h2>
+          <p id="heroSubtitle" class="muted"></p>
+          <div id="highlights" class="chips"></div>
+        </div>
+        <div class="hero-actions">
+          <button id="refreshBtn" class="btn primary">Обновить состояние</button>
+          <button id="healthBtn" class="btn ghost">Проверить health</button>
+        </div>
+      </section>
+
+      <section class="stats-grid">
+        <div class="stat card"><span>Коннекторы</span><strong id="statConnectors">0</strong></div>
+        <div class="stat card"><span>Сценарии</span><strong id="statScenarios">0</strong></div>
+        <div class="stat card"><span>Документы</span><strong id="statDocuments">0</strong></div>
+        <div class="stat card"><span>Логи</span><strong id="statLogs">0</strong></div>
+      </section>
+
+      <section class="split-grid">
+        <div class="card" id="modulesSection">
+          <div class="section-head">
+            <h3>Модули платформы</h3>
+            <span class="muted">Из ТЗ + market-inspired platform</span>
+          </div>
+          <div id="modulesList" class="module-list"></div>
+        </div>
+
+        <div class="card" id="connectors">
+          <div class="section-head">
+            <h3>Интеграционные коннекторы</h3>
+            <span class="muted">1C / SAP / SCADA / Telegram / Local LLM</span>
+          </div>
+          <div id="connectorsList" class="connector-list"></div>
+        </div>
+      </section>
+
+      <section class="card" id="scenarios">
+        <div class="section-head">
+          <h3>Сценарии автоматизации</h3>
+          <span class="muted">Запуск отчетов и агентских задач</span>
+        </div>
+        <div id="scenariosList" class="scenario-list"></div>
+      </section>
+
+      <section class="triple-grid">
+        <div class="card" id="assistant">
+          <div class="section-head">
+            <h3>AI-Ассистент</h3>
+            <span class="muted">Работает через локальный Ollama или fallback</span>
+          </div>
+          <textarea id="assistantPrompt" rows="8">Сформируй архитектуру локальной enterprise AI-платформы для банков и газовых систем: коннекторы, безопасность, планировщик, аудит, агенты.</textarea>
+          <div class="actions-row">
+            <button id="assistantBtn" class="btn primary">Спросить</button>
+          </div>
+          <pre id="assistantOutput" class="console"></pre>
+        </div>
+
+        <div class="card" id="documents">
+          <div class="section-head">
+            <h3>Документы</h3>
+            <span class="muted">Отчеты сохраняются как HTML</span>
+          </div>
+          <div id="documentsList" class="doc-list"></div>
+        </div>
+
+        <div class="card" id="audit">
+          <div class="section-head">
+            <h3>Аудит</h3>
+            <span class="muted">Последние действия системы</span>
+          </div>
+          <div id="logsList" class="logs-list"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

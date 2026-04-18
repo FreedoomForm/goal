@@ -1,0 +1,40 @@
+{
+  "name": "aegisops-local-ai",
+  "version": "1.0.0",
+  "description": "AegisOps Local AI — Universal Enterprise AI Integration Platform",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "server": "node server/standalone.js",
+    "build": "npx electron-packager . \"AegisOps Local AI\" --platform=win32 --arch=x64 --out=dist --overwrite"
+  },
+  "author": "AegisOps Team",
+  "license": "MIT",
+  "dependencies": {
+    "sql.js": "^1.11.0",
+    "express": "^4.21.0",
+    "cors": "^2.8.5",
+    "node-cron": "^3.0.3",
+    "uuid": "^10.0.0",
+    "marked": "^15.0.0",
+    "nodemailer": "^6.9.0",
+    "node-opcua-client": "^2.133.0"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.aegisops.localai",
+    "productName": "AegisOps Local AI",
+    "directories": { "output": "dist" },
+    "win": {
+      "target": ["portable"],
+      "icon": "assets/icon.ico"
+    },
+    "files": ["**/*", "!dist/**"],
+    "portable": {
+      "artifactName": "AegisOps-LocalAI-${version}.exe"
+    }
+  }
+}
