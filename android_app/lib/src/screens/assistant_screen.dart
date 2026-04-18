@@ -123,13 +123,18 @@ class _AssistantScreenState extends State<AssistantScreen> with TickerProviderSt
         title: Row(
           children: [
             Container(
-              width: 28, height: 28,
+              width: 30, height: 30,
               decoration: BoxDecoration(
-                color: const Color(0xFF7C5CFF).withOpacity(0.2),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFF7C5CFF).withOpacity(0.3)),
+                gradient: LinearGradient(colors: [
+                  AegisColors.accentPurple.withOpacity(0.85),
+                  AegisColors.accentBlue.withOpacity(0.85),
+                ]),
+                borderRadius: BorderRadius.circular(9),
+                boxShadow: [
+                  BoxShadow(color: AegisColors.accentPurple.withOpacity(0.4), blurRadius: 10, offset: const Offset(0, 2)),
+                ],
               ),
-              child: const Icon(Icons.smart_toy, size: 16, color: Color(0xFF7C5CFF)),
+              child: const Icon(Icons.auto_awesome_rounded, size: 17, color: Colors.white),
             ),
             const SizedBox(width: 10),
             const Text('AI Ассистент'),
@@ -203,28 +208,18 @@ class _AssistantScreenState extends State<AssistantScreen> with TickerProviderSt
               ),
             ),
           // Messages
-          Expanded(child: ListView.builder(
-            controller: _scroll,
-            padding: const EdgeInsets.all(12),
-            itemCount: _messages.length,
-            itemBuilder: (_, i) => _buildMessage(_messages[i]),
-          )),
+          if (_messages.isNotEmpty)
+            Expanded(child: ListView.builder(
+              controller: _scroll,
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+              itemCount: _messages.length,
+              itemBuilder: (_, i) => _buildMessage(_messages[i]),
+            )),
           if (_loading) const Padding(padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4), child: LinearProgressIndicator(backgroundColor: Color(0xFF24304E))),
-          // Quick actions
+          // Quick actions / welcome
           if (_messages.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Wrap(
-                spacing: 6,
-                runSpacing: 6,
-                children: [
-                  QuickActionChip(label: '📊 Газовый баланс', onTap: () { _ctrl.text = 'Сформируй отчёт по газовому балансу'; _send(); }),
-                  QuickActionChip(label: '💰 Платежи', onTap: () { _ctrl.text = 'Анализ дебиторской задолженности'; _send(); }),
-                  QuickActionChip(label: '🔍 Риски', onTap: () { _ctrl.text = 'Прогноз рисков недопоставки газа'; _send(); }),
-                  QuickActionChip(label: '📈 Тарифы', onTap: () { _ctrl.text = 'Тарифный анализ с точкой безубыточности'; _send(); }),
-                  QuickActionChip(label: '🔌 Коннекторы', onTap: () { _ctrl.text = 'Покажи статус всех коннекторов'; _send(); }),
-                ],
-              ),
+            Expanded(
+              child: _buildWelcome(),
             ),
           // Input
           SafeArea(child: Padding(
@@ -360,4 +355,106 @@ class _Msg {
   bool isStreaming;
 
   _Msg({required this.role, required this.content, this.provider, this.model, this.isStreaming = false});
+}
+
+extension _AssistantWelcome on _AssistantScreenState {
+  Widget _buildWelcome() {
+    final suggestions = [
+      (emoji: '📊', title: 'Газовый баланс', prompt: 'Сформируй отчёт по газовому балансу', color: AegisColors.accentBlue),
+      (emoji: '💰', title: 'Платежи', prompt: 'Анализ дебиторской задолженности', color: AegisColors.warning),
+      (emoji: '🔍', title: 'Риски', prompt: 'Прогноз рисков недопоставки газа', color: AegisColors.danger),
+      (emoji: '📈', title: 'Тарифы', prompt: 'Тарифный анализ с точкой безубыточности', color: AegisColors.success),
+      (emoji: '🔌', title: 'Коннекторы', prompt: 'Покажи статус всех коннекторов', color: AegisColors.accentPurple),
+      (emoji: '📝', title: 'Документы', prompt: 'Краткая сводка по последним документам', color: AegisColors.accentCyan),
+    ];
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SizedBox(height: 12),
+          Center(
+            child: Container(
+              width: 76, height: 76,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(colors: [
+                  AegisColors.accentPurple.withOpacity(0.9),
+                  AegisColors.accentBlue.withOpacity(0.9),
+                ]),
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: [
+                  BoxShadow(color: AegisColors.accentPurple.withOpacity(0.4), blurRadius: 24, offset: const Offset(0, 8)),
+                ],
+              ),
+              child: const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 38),
+            ),
+          ),
+          const SizedBox(height: 18),
+          const Center(
+            child: Text('Чем могу помочь?',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: AegisColors.textPrimary, fontFamily: 'Inter', letterSpacing: -0.3)),
+          ),
+          const SizedBox(height: 6),
+          const Center(
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: 32),
+              child: Text('Выберите готовый запрос или сформулируйте свой',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 13, color: AegisColors.textTertiary, fontFamily: 'Inter', height: 1.5)),
+            ),
+          ),
+          const SizedBox(height: 22),
+          GridView.count(
+            crossAxisCount: 2,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            mainAxisSpacing: 10,
+            crossAxisSpacing: 10,
+            childAspectRatio: 1.65,
+            children: suggestions.map((sug) {
+              return Material(
+                color: Colors.transparent,
+                borderRadius: BorderRadius.circular(14),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: () { _ctrl.text = sug.prompt; _send(); },
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AegisColors.bgCard,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: AegisColors.border),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Container(
+                          width: 32, height: 32,
+                          decoration: BoxDecoration(
+                            color: sug.color.withOpacity(0.14),
+                            borderRadius: BorderRadius.circular(9),
+                            border: Border.all(color: sug.color.withOpacity(0.25)),
+                          ),
+                          alignment: Alignment.center,
+                          child: Text(sug.emoji, style: const TextStyle(fontSize: 16)),
+                        ),
+                        Text(sug.title,
+                            maxLines: 1, overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AegisColors.textPrimary, fontFamily: 'Inter')),
+                        Text(sug.prompt,
+                            maxLines: 2, overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 10.5, color: AegisColors.textTertiary, fontFamily: 'Inter', height: 1.35)),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+    );
+  }
 }

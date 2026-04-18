@@ -131,11 +131,31 @@ function hideModal() {
   $('modalOverlay').classList.remove('visible');
 }
 
+/* ══════════════ Sidebar Mobile Helpers ══════════════ */
+function openSidebar() {
+  $('sidebar')?.classList.add('open');
+  $('sidebarBackdrop')?.classList.add('visible');
+  document.body.style.overflow = 'hidden';
+}
+function closeSidebar() {
+  $('sidebar')?.classList.remove('open');
+  $('sidebarBackdrop')?.classList.remove('visible');
+  document.body.style.overflow = '';
+}
+function toggleSidebar() {
+  if ($('sidebar')?.classList.contains('open')) closeSidebar();
+  else openSidebar();
+}
+
 /* ══════════════ Page Router ══════════════ */
 function navigateTo(page) {
   state.currentPage = page;
   $$('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.page === page));
   renderPage(page);
+  // Auto-close sidebar on mobile navigation
+  if (window.innerWidth <= 900) closeSidebar();
+  // Scroll to top on page change
+  try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch { window.scrollTo(0, 0); }
 }
 
 async function renderPage(page) {
@@ -1240,9 +1260,24 @@ window.addEventListener('DOMContentLoaded', () => {
     if (e.target === $('modalOverlay')) hideModal();
   });
 
-  // Sidebar toggle (mobile)
-  $('sidebarToggle')?.addEventListener('click', () => {
-    $('sidebar')?.classList.toggle('open');
+  // Sidebar toggle (mobile) — both the in-sidebar toggle and the external hamburger
+  $('sidebarToggle')?.addEventListener('click', toggleSidebar);
+  $('mobileHamburger')?.addEventListener('click', toggleSidebar);
+  $('sidebarBackdrop')?.addEventListener('click', closeSidebar);
+
+  // Close sidebar on Escape key
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      if ($('modalOverlay')?.classList.contains('visible')) hideModal();
+      else if ($('sidebar')?.classList.contains('open')) closeSidebar();
+    }
+  });
+
+  // Ensure sidebar state is correct on resize
+  window.addEventListener('resize', () => {
+    if (window.innerWidth > 900) {
+      closeSidebar();
+    }
   });
 
   // Status indicator

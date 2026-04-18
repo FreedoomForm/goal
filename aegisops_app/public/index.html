@@ -18,6 +18,37 @@
   <div class="bg-glow bg-glow-2"></div>
   <div class="bg-glow bg-glow-3"></div>
 
+  <!-- Mobile top bar (shown only on narrow screens) -->
+  <div class="mobile-topbar" id="mobileTopbar">
+    <button class="mobile-hamburger" id="mobileHamburger" aria-label="Open menu">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="3" y1="6" x2="21" y2="6"/>
+        <line x1="3" y1="12" x2="21" y2="12"/>
+        <line x1="3" y1="18" x2="21" y2="18"/>
+      </svg>
+    </button>
+    <div class="mobile-brand">
+      <svg width="24" height="24" viewBox="0 0 32 32" fill="none">
+        <rect width="32" height="32" rx="8" fill="url(#mbrandGrad)"/>
+        <path d="M8 22L16 10L24 22H8Z" fill="white" fill-opacity="0.9"/>
+        <circle cx="16" cy="18" r="3" fill="url(#mbrandGrad2)"/>
+        <defs>
+          <linearGradient id="mbrandGrad" x1="0" y1="0" x2="32" y2="32">
+            <stop stop-color="#59a8ff"/><stop offset="1" stop-color="#7c5cff"/>
+          </linearGradient>
+          <linearGradient id="mbrandGrad2" x1="13" y1="15" x2="19" y2="21">
+            <stop stop-color="#59a8ff"/><stop offset="1" stop-color="#7c5cff"/>
+          </linearGradient>
+        </defs>
+      </svg>
+      <span>AegisOps</span>
+    </div>
+    <div class="mobile-topbar-spacer"></div>
+  </div>
+
+  <!-- Mobile backdrop for sidebar -->
+  <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
   <div class="app-shell" id="appShell">
     <!-- Sidebar -->
     <aside class="sidebar" id="sidebar">
