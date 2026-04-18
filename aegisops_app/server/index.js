@@ -498,8 +498,11 @@ function createApp() {
 
   // Helper: check if Ollama is installed
   function isOllamaInstalled() {
-    try { execSync('which ollama 2>/dev/null || where ollama 2>nul', { encoding: 'utf8' }); return true; }
-    catch { return false; }
+    try {
+      const cmd = process.platform === 'win32' ? 'where ollama 2>nul' : 'which ollama 2>/dev/null';
+      execSync(cmd, { encoding: 'utf8' });
+      return true;
+    } catch { return false; }
   }
 
   // Helper: check if Ollama is running
@@ -662,8 +665,11 @@ function createApp() {
   app.post('/api/ai/ollama/stop', async (req, res) => {
     try {
       if (ollamaProcess) { ollamaProcess.kill(); ollamaProcess = null; }
-      // Also try to kill any running ollama serve
-      try { execSync('pkill -f "ollama serve" 2>/dev/null || taskkill /F /IM ollama.exe 2>nul'); } catch {}
+      // Kill ollama serve process using platform-appropriate command
+      try {
+        const killCmd = process.platform === 'win32' ? 'taskkill /F /IM ollama.exe 2>nul' : 'pkill -f "ollama serve" 2>/dev/null';
+        execSync(killCmd);
+      } catch {}
       logEvent('ai.ollama.stopped', {});
       res.json({ status: 'stopped' });
     } catch (err) {

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import '../services/api_client.dart';
@@ -41,6 +40,10 @@ class _AssistantScreenState extends State<AssistantScreen> with TickerProviderSt
       setState(() {
         _models = ollamaModels.map((m) => {'name': m['name']?.toString() ?? '', 'size': m['size'] ?? 0, 'family': m['family']?.toString() ?? ''}).toList();
         _selectedModel = status['activeModel']?.toString();
+        // Validate selected model exists in the list to prevent DropdownButton crash
+        if (_selectedModel != null && !_models.any((m) => m['name'] == _selectedModel)) {
+          _selectedModel = _models.isNotEmpty ? _models.first['name'] as String : null;
+        }
       });
     } catch (_) {}
   }
@@ -78,7 +81,7 @@ class _AssistantScreenState extends State<AssistantScreen> with TickerProviderSt
 
     try {
       final body = {'prompt': prompt, 'model': _selectedModel};
-      final stream = await ApiClient.instance.postSse('/api/assistant/stream', body);
+      final stream = ApiClient.instance.postSse('/api/assistant/stream', body);
 
       await for (final event in stream) {
         if (event['type'] == 'token' && event['content'] != null) {
@@ -96,9 +99,12 @@ class _AssistantScreenState extends State<AssistantScreen> with TickerProviderSt
         }
       }
     } catch (e) {
-      streamingMsg.content += '\nОшибка стриминга: $e';
+      streamingMsg.content += '\nПереключаюсь на обычный режим...';
       streamingMsg.isStreaming = false;
+      if (mounted) setState(() {});
       await _sendNormal(prompt);
+      _messages.remove(streamingMsg);
+      if (mounted) setState(() {});
     }
   }
 

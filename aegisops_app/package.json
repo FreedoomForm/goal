@@ -70,12 +70,22 @@
     },
     "linux": {
       "target": ["AppImage", "deb"],
-      "category": "Office",
-      "icon": "assets/icon.png"
+      "category": "Development;Office;Utility",
+      "icon": "assets/icon.png",
+      "artifactName": "AegisOps-LocalAI-${version}-${arch}.${ext}",
+      "desktop": {
+        "Name": "AegisOps Local AI",
+        "Comment": "Enterprise AI Integration Platform for gas balance forecasting",
+        "Categories": "Development;Office;Utility",
+        "Keywords": "AI;enterprise;SCADA;OPC;UA;gas;forecasting"
+      },
+      "deb": {
+        "depends": ["libglib2.0-0", "libsecret-1-0", "libx11-6"]
+      }
     },
     "mac": {
       "target": "dmg",
-      "icon": "assets/icon.icns",
+      "icon": "assets/icon.png",
       "category": "public.app-category.productivity"
     }
   }

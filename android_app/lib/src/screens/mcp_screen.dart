@@ -16,7 +16,7 @@ class _McpScreenState extends State<McpScreen> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
-    try { _data = await ApiClient.instance.getJson('/api/mcp/servers') as Map<String, dynamic>; }
+    try { final raw = await ApiClient.instance.getJson('/api/mcp/servers'); _data = raw is Map<String, dynamic> ? raw : {'persisted': [], 'running': []}; }
     catch (_) { _data = {'persisted': [], 'running': []}; }
     if (mounted) setState(() => _loading = false);
   }
@@ -37,7 +37,7 @@ class _McpScreenState extends State<McpScreen> {
   @override
   Widget build(BuildContext context) {
     final persisted = (_data?['persisted'] as List? ?? []);
-    final running = Map.fromEntries((_data?['running'] as List? ?? []).map((r) => MapEntry(r['name']?.toString() ?? '', r as Map)));
+    final running = Map.fromEntries((_data?['running'] as List? ?? []).map((r) => MapEntry(r is Map ? (r['name']?.toString() ?? '') : '', r is Map ? r : <dynamic, dynamic>{})));
 
     return Scaffold(
       appBar: AppBar(title: const Text('MCP серверы'), actions: [IconButton(icon: const Icon(Icons.refresh), onPressed: _load)]),

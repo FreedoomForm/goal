@@ -21,7 +21,7 @@ class SettingsScreen extends StatelessWidget {
           Card(child: ListTile(
             leading: const Icon(Icons.key, color: Color(0xFF7C5CFF)),
             title: const Text('API-ключ'),
-            subtitle: Text((s.apiKey ?? '').replaceRange(8, null, '••••••') ),
+            subtitle: Text(() { final k = s.apiKey ?? ''; return k.isEmpty ? '—' : k.replaceRange(0, k.length > 8 ? 8 : k.length, '••••••'); }() ),
           )),
           const SizedBox(height: 16),
           FilledButton.tonalIcon(

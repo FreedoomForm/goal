@@ -24,7 +24,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     setState(() { _loading = true; _error = null; });
     try {
       final d = await ApiClient.instance.getJson('/api/dashboard');
-      setState(() { _data = d as Map<String, dynamic>; _loading = false; });
+      setState(() { _data = d is Map<String, dynamic> ? d : <String, dynamic>{}; _loading = false; });
     } catch (e) {
       setState(() { _error = e.toString(); _loading = false; });
     }

@@ -186,7 +186,7 @@ class _StreamingDotsState extends State<StreamingDots> with SingleTickerProvider
         return AnimatedBuilder(
           animation: _ctrl,
           builder: (_, __) {
-            final progress = (_ctrl.value - i * 0.15) % 1.0;
+            final progress = ((_ctrl.value - i * 0.15) % 1.0 + 1.0) % 1.0;
             final scale = progress < 0.4 ? 0.6 + progress * 1.0 : 1.0 - (progress - 0.4) * 0.6;
             final opacity = progress < 0.4 ? 0.4 + progress * 1.5 : 1.0 - (progress - 0.4) * 1.0;
             return Padding(

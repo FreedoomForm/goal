@@ -16,7 +16,7 @@ class _ScenariosScreenState extends State<ScenariosScreen> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
-    try { _scenarios = await ApiClient.instance.getJson('/api/scenarios') as List; }
+    try { final raw = await ApiClient.instance.getJson('/api/scenarios'); _scenarios = raw is List ? raw : []; }
     catch (_) { _scenarios = []; }
     if (mounted) setState(() => _loading = false);
   }

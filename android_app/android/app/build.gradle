@@ -16,7 +16,6 @@ def flutterVersionName = localProperties.getProperty('flutter.versionName') ?: '
 android {
     namespace "com.aegisops.mobile"
     compileSdk 34
-    ndkVersion = "25.1.8937393"
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
@@ -41,12 +40,6 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
-}
-
-dependencies {
-    // Play Core — required by Flutter's deferred components / split-install references
-    implementation 'com.google.android.play:core:1.10.3'
-    implementation 'com.google.android.play:core-ktx:1.8.1'
 }
 
 flutter { source '../..' }

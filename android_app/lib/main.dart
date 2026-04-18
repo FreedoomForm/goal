@@ -21,13 +21,27 @@ void main() async {
   runApp(const ProviderScope(child: AegisOpsApp()));
 }
 
-class AegisOpsApp extends ConsumerWidget {
+class AegisOpsApp extends StatefulWidget {
   const AegisOpsApp({super.key});
+  @override
+  State<AegisOpsApp> createState() => _AegisOpsAppState();
+}
+
+class _AegisOpsAppState extends State<AegisOpsApp> {
+  late final GoRouter _router;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final router = GoRouter(
+  void initState() {
+    super.initState();
+    _router = GoRouter(
       initialLocation: SettingsService.instance.hasCredentials ? '/dashboard' : '/connect',
+      redirect: (context, state) {
+        final loggedIn = SettingsService.instance.hasCredentials;
+        final onConnect = state.uri.path == '/connect';
+        if (!loggedIn && !onConnect) return '/connect';
+        if (loggedIn && onConnect) return '/dashboard';
+        return null;
+      },
       routes: [
         GoRoute(path: '/connect', builder: (_, __) => const ConnectScreen()),
         ShellRoute(
@@ -43,12 +57,15 @@ class AegisOpsApp extends ConsumerWidget {
         ),
       ],
     );
+  }
 
+  @override
+  Widget build(BuildContext context) {
     return MaterialApp.router(
       title: 'AegisOps Mobile',
       debugShowCheckedModeBanner: false,
       theme: buildTheme(),
-      routerConfig: router,
+      routerConfig: _router,
     );
   }
 }
@@ -74,11 +91,11 @@ class _HomeShellState extends State<HomeShell> {
   @override
   Widget build(BuildContext context) {
     final loc = GoRouterState.of(context).uri.path;
-    _index = _tabs.indexWhere((t) => t.route == loc).clamp(0, _tabs.length - 1);
+    final index = _tabs.indexWhere((t) => t.route == loc).clamp(0, _tabs.length - 1);
     return Scaffold(
       body: widget.child,
       bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
+        selectedIndex: index,
         onDestinationSelected: (i) => context.go(_tabs[i].route),
         destinations: _tabs.map((t) => NavigationDestination(icon: Icon(t.icon), label: t.label)).toList(),
       ),

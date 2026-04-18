@@ -20,9 +20,13 @@ class _ConnectScreenState extends State<ConnectScreen> {
   Future<void> _consume(String baseUrl, String code) async {
     setState(() { _busy = true; _error = null; });
     try {
+      // Validate URL has a scheme
+      if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
+        throw Exception('URL должен начинаться с http:// или https://');
+      }
       final r = await ApiClient.consumePairingCode(baseUrl: baseUrl, code: code);
-      final apiKey = r['api_key'] as String?;
-      final base = (r['base_url'] as String?)?.isNotEmpty == true ? r['base_url'] as String : baseUrl;
+      final apiKey = r['api_key']?.toString();
+      final base = (r['base_url']?.toString()?.isNotEmpty == true) ? r['base_url']!.toString() : baseUrl;
       if (apiKey == null || apiKey.isEmpty) throw Exception('Сервер не вернул API key');
       await SettingsService.instance.save(baseUrl: base, apiKey: apiKey);
       if (mounted) context.go('/dashboard');
@@ -35,13 +39,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
 
   Future<void> _scan() async {
     final result = await Navigator.of(context).push<String>(MaterialPageRoute(
-      builder: (_) => Scaffold(
-        appBar: AppBar(title: const Text('Сканируйте QR')),
-        body: MobileScanner(onDetect: (capture) {
-          final raw = capture.barcodes.firstOrNull?.rawValue;
-          if (raw != null) Navigator.of(context).pop(raw);
-        }),
-      ),
+      builder: (_) => _QrScannerScreen(),
     ));
     if (result == null) return;
     try {
@@ -60,7 +58,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('AegisOps Mobile — подключение')),
       body: SafeArea(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(20),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -107,6 +105,30 @@ class _ConnectScreenState extends State<ConnectScreen> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Separate QR scanner screen with double-pop protection
+class _QrScannerScreen extends StatefulWidget {
+  @override
+  State<_QrScannerScreen> createState() => _QrScannerScreenState();
+}
+
+class _QrScannerScreenState extends State<_QrScannerScreen> {
+  bool _popped = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Сканируйте QR')),
+      body: MobileScanner(onDetect: (capture) {
+        final raw = capture.barcodes.firstOrNull?.rawValue;
+        if (raw != null && !_popped) {
+          _popped = true;
+          Navigator.of(context).pop(raw);
+        }
+      }),
     );
   }
 }

@@ -4,7 +4,7 @@ import 'package:http/http.dart' as http;
 import 'settings_service.dart';
 
 /// Thin HTTP client that injects the API key on every request.
-/// Retries transient failures (1x) and surfaces structured errors.
+/// Surfaces structured errors via ApiException.
 class ApiClient {
   ApiClient._();
   static final ApiClient instance = ApiClient._();

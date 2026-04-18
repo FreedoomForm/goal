@@ -25,7 +25,7 @@ async function createWindow() {
     minHeight: 768,
     backgroundColor: '#050a15',
     title: 'AegisOps Local AI — Enterprise Integration Platform',
-    icon: path.join(__dirname, 'assets', 'icon.ico'),
+    icon: path.join(__dirname, 'assets', process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
