@@ -29,7 +29,7 @@ ThemeData buildTheme() {
     ),
     navigationBarTheme: NavigationBarThemeData(
       backgroundColor: const Color(0xFF0F1830),
-      indicatorColor: const Color(0xFF59A8FF).withValues(alpha: 0.15),
+      indicatorColor: const Color(0xFF59A8FF).withOpacity(0.15),
       labelTextStyle: WidgetStatePropertyAll(GoogleFonts.inter(fontSize: 11)),
     ),
     inputDecorationTheme: InputDecorationTheme(

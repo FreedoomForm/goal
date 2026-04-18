@@ -99,7 +99,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
                 const SizedBox(height: 16),
                 Container(
                   padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(color: const Color(0xFFFF6A6A).withValues(alpha: 0.1), borderRadius: BorderRadius.circular(10)),
+                  decoration: BoxDecoration(color: const Color(0xFFFF6A6A).withOpacity(0.1), borderRadius: BorderRadius.circular(10)),
                   child: Text(_error!, style: const TextStyle(color: Color(0xFFFF6A6A))),
                 ),
               ],

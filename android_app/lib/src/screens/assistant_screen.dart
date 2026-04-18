@@ -58,7 +58,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
                   margin: const EdgeInsets.symmetric(vertical: 4),
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: isUser ? const Color(0xFF59A8FF).withValues(alpha: 0.15) : const Color(0xFF121B31),
+                    color: isUser ? const Color(0xFF59A8FF).withOpacity(0.15) : const Color(0xFF121B31),
                     border: Border.all(color: isUser ? const Color(0xFF59A8FF) : const Color(0xFF24304E)),
                     borderRadius: BorderRadius.circular(12),
                   ),

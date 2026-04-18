@@ -67,7 +67,7 @@ class _McpScreenState extends State<McpScreen> {
                     Expanded(child: Text(s['name']?.toString() ?? '', style: const TextStyle(fontWeight: FontWeight.w700))),
                     Chip(
                       label: Text(isRunning ? 'running' : 'stopped', style: const TextStyle(fontSize: 10)),
-                      backgroundColor: isRunning ? const Color(0xFF23C483).withValues(alpha: 0.2) : Colors.white10,
+                      backgroundColor: isRunning ? const Color(0xFF23C483).withOpacity(0.2) : Colors.white10,
                     ),
                   ]),
                   const SizedBox(height: 4),
