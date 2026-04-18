@@ -1,0 +1,36 @@
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-ra -q --strict-markers"
+asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "C4", "UP", "N", "S"]
+ignore = [
+    "S101",  # pytest uses assert
+    "E501",  # line length handled by formatter
+    "S603",  # subprocess — we vet inputs
+    "S104",  # bind 0.0.0.0 is intentional for opt-in remote mode
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "N"]
+
+[tool.coverage.run]
+source = ["."]
+omit = ["tests/*", "*/aegisops_app/*", "android_app/*", ".venv/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]

@@ -1,0 +1,15 @@
+{
+  "env": { "node": true, "browser": true, "es2022": true, "jest": true },
+  "parserOptions": { "ecmaVersion": 2022, "sourceType": "script" },
+  "rules": {
+    "no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }],
+    "no-console": "off",
+    "prefer-const": "warn",
+    "eqeqeq": ["warn", "smart"],
+    "no-var": "error",
+    "semi": ["warn", "always"]
+  },
+  "overrides": [
+    { "files": ["public/js/**/*.js"], "parserOptions": { "sourceType": "script" } }
+  ]
+}

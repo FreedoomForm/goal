@@ -1,0 +1,92 @@
+name: Build Desktop (Windows / Linux / macOS)
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            script: build:win
+            artifact: AegisOps-Windows
+            pattern: 'aegisops_app/dist/*.exe'
+          - os: ubuntu-latest
+            script: build:linux
+            artifact: AegisOps-Linux
+            pattern: 'aegisops_app/dist/*.AppImage'
+          - os: macos-latest
+            script: build:mac
+            artifact: AegisOps-macOS
+            pattern: 'aegisops_app/dist/*.dmg'
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: aegisops_app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: aegisops_app/package-lock.json
+
+      - name: Install system deps (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libarchive-tools rpm fakeroot dpkg
+
+      - name: Install npm deps
+        run: npm ci || npm install
+
+      - name: Run tests
+        run: npm test --if-present
+        continue-on-error: true
+
+      - name: Build
+        run: npm run ${{ matrix.script }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: List output
+        shell: bash
+        run: ls -lah dist/ || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.pattern }}
+          if-no-files-found: warn
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release-artifacts/**/*.exe
+            release-artifacts/**/*.AppImage
+            release-artifacts/**/*.deb
+            release-artifacts/**/*.dmg
+          generate_release_notes: true
+          draft: false
+          prerelease: false

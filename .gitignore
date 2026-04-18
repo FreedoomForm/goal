@@ -4,3 +4,10 @@ data/
 *.db
 .eb-cache/
 __pycache__/
+.pytest_cache/
+generated_reports/*.html
+android_app/build/
+android_app/.dart_tool/
+android_app/.flutter-plugins*
+*.log
+.DS_Store

@@ -11,6 +11,15 @@ const { v4: uuidv4 } = require('uuid');
 
 const { initDB, getDB, queryAll, queryOne, runSQL, saveDB, nowISO } = require('./db');
 const { createConnector, getConnectorTypes } = require('./connectors');
+const {
+  rateLimiter, securityHeaders, inputSanitizer, payloadGuard,
+} = require('./middleware/security');
+const { requestLogger, errorHandler, log } = require('./middleware/logger');
+const { authMiddleware } = require('./auth');
+const authRoutes = require('./routes/auth');
+const workflowRoutes = require('./routes/workflows');
+const { router: mcpRoutes, autoStartPersisted: autoStartMcp } = require('./routes/mcp');
+const tunnel = require('./tunnel');
 
 const REPORTS_DIR = path.join(__dirname, '..', 'generated_reports');
 if (!fs.existsSync(REPORTS_DIR)) fs.mkdirSync(REPORTS_DIR, { recursive: true });
@@ -117,8 +126,52 @@ function generateHTMLReport(scenario, aiResult, collectedData) {
 /* ────────── Express App ────────── */
 function createApp() {
   const app = express();
-  app.use(cors());
+  app.disable('x-powered-by');
+  app.set('trust proxy', true);
+
+  // CORS: allow same-origin + explicit mobile origins. For public tunneling,
+  // only the paired mobile app matters (API-key auth).
+  app.use(cors({
+    origin: (origin, cb) => cb(null, true), // auth is enforced below
+    credentials: false,
+    maxAge: 86400,
+  }));
+
+  app.use(securityHeaders);
+  app.use(payloadGuard(10 * 1024 * 1024));
   app.use(express.json({ limit: '10mb' }));
+  app.use(inputSanitizer);
+  app.use(requestLogger);
+  app.use('/api/', rateLimiter({ max: 300, windowMs: 60_000 }));
+
+  // Auth routes (login, keys, pairing) — no auth required to hit them
+  app.use('/api/auth', authRoutes);
+
+  // Remote routes are behind authMiddleware; localhost bypasses it by default.
+  app.use('/api/workflows', authMiddleware({ required: true }), workflowRoutes);
+  app.use('/api/mcp', authMiddleware({ required: true }), mcpRoutes);
+
+  // Tunnel management (admin only)
+  app.get('/api/tunnel/status', authMiddleware({ required: true }), (req, res) => res.json(tunnel.status()));
+  app.post('/api/tunnel/start', authMiddleware({ scopes: ['*'] }), async (req, res) => {
+    try {
+      const port = parseInt(req.body?.port || process.env.PORT || 18090);
+      const provider = req.body?.provider || 'auto';
+      const r = await tunnel.start(port, provider);
+      res.json(r);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+  app.post('/api/tunnel/stop', authMiddleware({ scopes: ['*'] }), async (req, res) => {
+    await tunnel.stop();
+    res.json({ ok: true });
+  });
+  app.post('/api/tunnel/manual', authMiddleware({ scopes: ['*'] }), (req, res) => {
+    const { url } = req.body || {};
+    if (!url) return res.status(400).json({ error: 'url required' });
+    tunnel.setPublicUrl(url, 'manual');
+    res.json({ ok: true, url });
+  });
+
   app.use(express.static(path.join(__dirname, '..', 'public')));
   app.use('/reports', express.static(REPORTS_DIR));
 
@@ -392,17 +445,23 @@ function createApp() {
   // SPA fallback
   app.get('*', (req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'index.html')));
 
+  // Last-resort error handler
+  app.use(errorHandler);
+
   return app;
 }
 
 /* ────────── Start server ────────── */
-async function startServer(port = 18090) {
+async function startServer(port = 18090, { bind = '127.0.0.1' } = {}) {
   await initDB();
   const app = createApp();
+  // Auto-start persisted MCP servers in background (do not block listen)
+  autoStartMcp().catch(err => log.warn('mcp.autostart_error', { err: err.message }));
+
   return new Promise((resolve, reject) => {
     const server = http.createServer(app);
-    server.listen(port, '127.0.0.1', () => {
-      console.log(`[AegisOps] Server at http://127.0.0.1:${port}`);
+    server.listen(port, bind, () => {
+      log.info('server.listening', { url: `http://${bind}:${port}`, bind, port });
       resolve(server);
     });
     server.on('error', reject);

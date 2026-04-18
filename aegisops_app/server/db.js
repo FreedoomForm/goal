@@ -121,6 +121,42 @@ async function initDB() {
       value TEXT DEFAULT '',
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS workflows (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      graph TEXT DEFAULT '{}',
+      enabled INTEGER DEFAULT 1,
+      cron_expr TEXT DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS workflow_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      workflow_id INTEGER NOT NULL,
+      status TEXT DEFAULT 'pending',
+      trace TEXT DEFAULT '[]',
+      started_at TEXT NOT NULL,
+      finished_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS api_keys (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      label TEXT NOT NULL,
+      key_hash TEXT NOT NULL UNIQUE,
+      scopes TEXT DEFAULT '[]',
+      created_at TEXT NOT NULL,
+      last_used_at TEXT,
+      revoked INTEGER DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS mcp_servers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      preset TEXT NOT NULL,
+      config TEXT DEFAULT '{}',
+      auto_start INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
 
   // Check if seeded

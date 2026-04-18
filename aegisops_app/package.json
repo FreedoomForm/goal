@@ -1,40 +1,75 @@
 {
   "name": "aegisops-local-ai",
-  "version": "1.0.0",
-  "description": "AegisOps Local AI — Universal Enterprise AI Integration Platform",
+  "version": "1.1.0",
+  "description": "AegisOps Local AI — Universal Enterprise AI Integration Platform with MCP, node-based workflows and mobile companion",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "server": "node server/standalone.js",
-    "build": "npx electron-packager . \"AegisOps Local AI\" --platform=win32 --arch=x64 --out=dist --overwrite"
+    "server:lan": "cross-env BIND=0.0.0.0 node server/standalone.js",
+    "server:public": "cross-env BIND=0.0.0.0 AEGISOPS_TUNNEL=cloudflared node server/standalone.js",
+    "test": "jest --runInBand",
+    "lint": "eslint server public/js --ext .js",
+    "build:win": "electron-builder --win --publish never",
+    "build:linux": "electron-builder --linux --publish never",
+    "build:mac": "electron-builder --mac --publish never",
+    "postinstall": "electron-builder install-app-deps || true"
   },
   "author": "AegisOps Team",
   "license": "MIT",
   "dependencies": {
-    "sql.js": "^1.11.0",
-    "express": "^4.21.0",
     "cors": "^2.8.5",
-    "node-cron": "^3.0.3",
-    "uuid": "^10.0.0",
+    "cross-env": "^7.0.3",
+    "express": "^4.21.0",
     "marked": "^15.0.0",
+    "node-cron": "^3.0.3",
+    "node-opcua-client": "^2.133.0",
     "nodemailer": "^6.9.0",
-    "node-opcua-client": "^2.133.0"
+    "qrcode": "^1.5.4",
+    "sql.js": "^1.11.0",
+    "uuid": "^10.0.0"
   },
   "devDependencies": {
     "electron": "^33.0.0",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "eslint": "^9.12.0",
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0"
   },
   "build": {
     "appId": "com.aegisops.localai",
     "productName": "AegisOps Local AI",
     "directories": { "output": "dist" },
+    "files": [
+      "**/*",
+      "!dist/**",
+      "!node_modules/.cache/**",
+      "!**/*.md"
+    ],
     "win": {
-      "target": ["portable"],
-      "icon": "assets/icon.ico"
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "icon": "assets/icon.ico",
+      "artifactName": "AegisOps-LocalAI-${version}-${arch}.${ext}"
     },
-    "files": ["**/*", "!dist/**"],
-    "portable": {
-      "artifactName": "AegisOps-LocalAI-${version}.exe"
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Office",
+      "icon": "assets/icon.png"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "assets/icon.icns",
+      "category": "public.app-category.productivity"
     }
   }
 }
