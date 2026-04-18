@@ -57,6 +57,18 @@ const typeIcons = {
   telegram: '✈️',
   crm_rest: '👥',
   erp_rest: '⚙️',
+  askug: '💳',
+  mqtt: '📡',
+  database: '🗄️',
+  mssql: '🗄️',
+  postgresql: '🗄️',
+  mysql: '🗄️',
+  rest: '🌐',
+  graphql: '🔮',
+  email: '📧',
+  smtp: '📧',
+  webhook: '🔔',
+  tekinsoft: '🌐',
 };
 
 const typeNames = {
@@ -67,6 +79,18 @@ const typeNames = {
   telegram: 'Telegram Bot',
   crm_rest: 'CRM REST',
   erp_rest: 'ERP REST',
+  askug: 'АСКУГ / UGaz',
+  mqtt: 'MQTT IoT',
+  database: 'База данных',
+  mssql: 'MSSQL',
+  postgresql: 'PostgreSQL',
+  mysql: 'MySQL',
+  rest: 'REST API',
+  graphql: 'GraphQL',
+  email: 'Email / SMTP',
+  smtp: 'SMTP',
+  webhook: 'Webhook',
+  tekinsoft: 'Tekinsoft',
 };
 
 const categoryColors = {
@@ -382,13 +406,20 @@ async function renderConnectors(container) {
       <div class="form-group">
         <label class="form-label">Тип</label>
         <select class="form-select" id="newConnType">
-          <option value="ollama">Ollama LLM</option>
-          <option value="one_c_odata">1C OData</option>
-          <option value="sap_odata">SAP OData</option>
-          <option value="opc_ua">OPC UA / SCADA</option>
-          <option value="telegram">Telegram Bot</option>
-          <option value="crm_rest">CRM REST</option>
-          <option value="erp_rest">ERP REST</option>
+          <option value="ollama">🤖 Ollama LLM</option>
+          <option value="one_c_odata">📦 1C OData</option>
+          <option value="sap_odata">🏢 SAP OData</option>
+          <option value="opc_ua">🏭 OPC UA / SCADA</option>
+          <option value="telegram">✈️ Telegram Bot</option>
+          <option value="askug">💳 АСКУГ / UGaz / E-GAZ</option>
+          <option value="mqtt">📡 MQTT IoT</option>
+          <option value="database">🗄️ База данных (SQL)</option>
+          <option value="crm_rest">👥 CRM REST</option>
+          <option value="erp_rest">⚙️ ERP REST</option>
+          <option value="rest">🌐 REST API</option>
+          <option value="graphql">🔮 GraphQL</option>
+          <option value="email">📧 Email / SMTP</option>
+          <option value="webhook">🔔 Webhook</option>
         </select>
       </div>
       <div class="form-group">
@@ -696,8 +727,14 @@ async function renderAssistant(container) {
     chatInput.value = '';
     chatMessages.scrollTop = chatMessages.scrollHeight;
 
-    // Add loading
-    chatMessages.innerHTML += '<div class="chat-message ai" id="chatLoading"><div class="loading"><div class="spinner"></div><span>AI думает...</span></div></div>';
+    // Add loading with streaming dots (OpenClaw style)
+    chatMessages.innerHTML += `<div class="chat-message ai" id="chatLoading">
+      <div class="chat-avatar">🤖</div>
+      <div class="chat-bubble">
+        <span class="provider-tag">ollama${model ? ' / ' + model : ''}</span>
+        <div class="streaming-dots"><span></span><span></span><span></span></div>
+      </div>
+    </div>`;
     chatMessages.scrollTop = chatMessages.scrollHeight;
 
     try {
@@ -732,14 +769,33 @@ async function renderAssistant(container) {
 
 function renderChatMessage(msg) {
   if (msg.role === 'user') {
-    return `<div class="chat-message user">${escapeHtml(msg.content)}</div>`;
+    return `<div class="chat-message user">
+      <div class="chat-avatar">👤</div>
+      <div class="chat-bubble">${escapeHtml(msg.content)}</div>
+    </div>`;
   }
+  // AI message with OpenClaw-style layout
+  const providerInfo = msg.provider || 'ai';
+  const modelInfo = msg.model ? ' / ' + msg.model : '';
+  const toolCalls = msg.toolCalls ? msg.toolCalls.map(t =>
+    `<div class="chat-tool-call"><span class="tool-icon">🔧</span>${escapeHtml(t.name || t)}${t.duration ? `<span class="tool-duration">${t.duration}</span>` : ''}</div>`
+  ).join('') : '';
+  const thinkingBlock = msg.thinking ? `
+    <div class="chat-thinking${msg.thinkingOpen ? ' open' : ''}">
+      <div class="chat-thinking-header">💡 Думает...</div>
+      <div class="chat-thinking-body">${escapeHtml(msg.thinking)}</div>
+    </div>` : '';
+  const isStreaming = msg.isStreaming;
   return `
     <div class="chat-message ai">
-      <span class="provider-tag">${msg.provider || 'ai'}${msg.model ? ' / ' + msg.model : ''}</span>
-      <pre>${escapeHtml(msg.content)}</pre>
-    </div>
-  `;
+      <div class="chat-avatar">🤖</div>
+      <div class="chat-bubble">
+        <span class="provider-tag">${escapeHtml(providerInfo)}${escapeHtml(modelInfo)}</span>
+        ${thinkingBlock}
+        ${toolCalls}
+        <div class="ai-content">${isStreaming && !msg.content ? '<div class="streaming-dots"><span></span><span></span><span></span></div>' : `<pre style="white-space:pre-wrap;word-break:break-word">${escapeHtml(msg.content)}</pre>`}</div>
+      </div>
+    </div>`;
 }
 
 /* ══════════════ DOCUMENTS PAGE ══════════════ */
