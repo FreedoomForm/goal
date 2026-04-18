@@ -44,6 +44,7 @@
   "build": {
     "appId": "com.aegisops.localai",
     "productName": "AegisOps Local AI",
+    "forceCodeSigning": false,
     "directories": { "output": "dist" },
     "files": [
       "**/*",
@@ -57,7 +58,8 @@
         { "target": "portable", "arch": ["x64"] }
       ],
       "icon": "assets/icon.ico",
-      "artifactName": "AegisOps-LocalAI-${version}-${arch}.${ext}"
+      "artifactName": "AegisOps-LocalAI-${version}-${arch}.${ext}",
+      "signAndEditExecutable": false
     },
     "nsis": {
       "oneClick": false,
