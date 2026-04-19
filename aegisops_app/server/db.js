@@ -59,7 +59,19 @@ async function initDB(customDir) {
     dbPath = path.join(dbDir, 'aegisops.db');
   }
 
-  if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
+  try {
+    if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
+  } catch (e) {
+    if (e.code === 'ENOTDIR') {
+      // Path exists as a file — fall back to temp directory
+      const os = require('os');
+      dbDir = path.join(os.tmpdir(), 'aegisops');
+      dbPath = path.join(dbDir, 'aegisops.db');
+      if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
+    } else {
+      throw e;
+    }
+  }
 
   SQL = await initSqlJs();
 

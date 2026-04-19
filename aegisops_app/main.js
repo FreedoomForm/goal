@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu } = require('electron');
+const { app, BrowserWindow, Menu, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { startServer } = require('./server/index');
@@ -45,6 +45,11 @@ async function createWindow() {
     mainWindow.loadURL(`http://127.0.0.1:${EXPRESS_PORT}`);
   } catch (err) {
     console.error('[Electron] Server failed to start:', err);
+    // Show user-friendly error instead of raw stack trace
+    dialog.showErrorBox(
+      'AegisOps — Ошибка запуска',
+      `Не удалось запустить сервер: ${err.message}\n\nПопробуйте перезапустить приложение.`
+    );
     mainWindow.loadFile(path.join(__dirname, 'public', 'index.html'));
   }
 

@@ -25,8 +25,28 @@ const tunnel = require('./tunnel');
 const modelManager = require('./services/model-manager');
 const ollamaManager = require('./services/ollama-manager');
 
-const REPORTS_DIR = path.join(__dirname, '..', 'generated_reports');
-if (!fs.existsSync(REPORTS_DIR)) fs.mkdirSync(REPORTS_DIR, { recursive: true });
+// Writable data directory — defaults to __dirname/../data but can be overridden
+// for packaged Electron apps where __dirname is inside read-only ASAR.
+let _dataDir = path.join(__dirname, '..', 'data');
+let REPORTS_DIR = path.join(_dataDir, 'generated_reports');
+
+function ensureDir(dir) {
+  try {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  } catch (e) {
+    // If the path exists as a file (ENOTDIR), use a fallback temp dir
+    if (e.code === 'ENOTDIR') {
+      const os = require('os');
+      dir = path.join(os.tmpdir(), 'aegisops', path.basename(dir));
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    } else {
+      throw e;
+    }
+  }
+  return dir;
+}
+
+REPORTS_DIR = ensureDir(REPORTS_DIR);
 
 function uid() { return uuidv4().replace(/-/g, '').slice(0, 12); }
 
@@ -642,8 +662,15 @@ function createApp() {
 }
 
 /* ────────── Start server ────────── */
-async function startServer(port = 18090, { bind = '127.0.0.1' } = {}) {
-  await initDB();
+async function startServer(port = 18090, { bind = '127.0.0.1', dataDir } = {}) {
+  // If dataDir is provided (e.g. from Electron's userData), use it for
+  // DB and reports so we don't write inside read-only ASAR archives.
+  if (dataDir) {
+    _dataDir = dataDir;
+    REPORTS_DIR = path.join(_dataDir, 'generated_reports');
+    REPORTS_DIR = ensureDir(REPORTS_DIR);
+  }
+  await initDB(dataDir || undefined);
   const app = createApp();
   // Auto-start persisted MCP servers in background (do not block listen)
   autoStartMcp().catch(err => log.warn('mcp.autostart_error', { err: err.message }));
