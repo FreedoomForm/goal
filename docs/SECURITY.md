@@ -1,4 +1,4 @@
-# Security Guide
+# Security Guide v2.0
 
 ## Threat model
 
@@ -16,55 +16,95 @@ AegisOps может запускаться в трёх режимах:
 - **Admin password**: scrypt(password, salt=16B, keylen=64B). Сравнение — `crypto.timingSafeEqual`.
 - **Localhost bypass**: можно отключить через `AEGISOPS_ENFORCE_LOCAL_AUTH=1`.
 
+### SCADA DMZ (ISA/IEC 62443)
+
+**Критическое обновление v2.0**: Все OPC UA/SCADA соединения изолированы через DMZ-прокси.
+
+Архитектура по Purdue Model:
+```
+Level 5 (Enterprise) → AegisOps Server
+       ↓
+Level 3.5 (DMZ) → ScadaDmzProxy
+  - Read-only по умолчанию
+  - Rate limiting (token bucket)
+  - Полный audit trail
+  - Emergency stop
+       ↓
+Level 2-3 (Control) → OPC UA SCADA Server
+```
+
+Режимы доступа:
+- `read_only` (по умолчанию): только read, browse, subscribe
+- `read_write`: + write, call (требует явной конфигурации)
+- `admin`: все операции (только для доверенных сред)
+
+Защита:
+- **Read-only default**: если DMZ не настроен, автоматически применяется restrictive proxy
+- **Rate limiting**: настраиваемый token bucket (по умолчанию 10 req/sec)
+- **Node ID validation**: защита от injection через malformed nodeId
+- **Write constraints**: проверка диапазонов, safety threshold (1e9)
+- **Emergency stop**: мгновенная блокировка через API (`POST /api/dmz/emergency-stop`)
+- **Full audit**: каждое действие (авторизованное или заблокированное) логируется
+
+### Credential Encryption (AES-256-GCM)
+
+**Критическое обновление v2.0**: Учётные данные коннекторов зашифрованы.
+
+- **Algorithm**: AES-256-GCM (authenticated encryption)
+- **Key derivation**: HKDF-SHA256 от serverSecret, 256-bit
+- **IV**: 12-byte random per encryption
+- **Auto-migration**: plaintext auth_payload → encrypted_auth_payload при запуске
+- **Zero-out**: после шифрования plaintext поле обнуляется
+
+Предыдущая уязвимость (plaintext в БД) полностью устранена.
+
 ### Transport
-- **HTTPS (mobile)**: `network_security_config.xml` → cleartextTrafficPermitted="false" по умолчанию. Исключения для LAN-диапазонов (192.168/16, 10/8, 172.16/12).
-- **Tunnel**: Cloudflare → автоматический TLS (wildcard certs). ngrok → тоже TLS.
-- **CSP**: жёсткий, `default-src 'self'`, `script-src 'self' 'unsafe-inline'` (unsafe-inline — только для inline SVG и Electron bridge; можно ужесточить с nonce).
+- **HTTPS (mobile)**: `network_security_config.xml` → cleartextTrafficPermitted="false"
+- **Tunnel**: Cloudflare → автоматический TLS. ngrok → тоже TLS.
+- **CSP**: жёсткий, `default-src 'self'`, `script-src 'self' 'unsafe-inline'`
 
 ### Input validation
-- `inputSanitizer` middleware применяется ко всем request body/query.
-- Убирает управляющие байты (0x00-0x1F кроме \n\r\t).
-- Блокирует ключи `__proto__`, `constructor`, `prototype` в body (prototype pollution).
-- Payload-guard: 10 MB max.
-- Все SQL-запросы — параметризованы (`sql.js` prepared statements).
+- `inputSanitizer` middleware: control chars + prototype pollution defense
+- Payload-guard: 10 MB max
+- Все SQL-запросы — параметризованы
+- **Node ID sanitization**: OPC UA node IDs валидируются по формату (DMZ proxy)
 
 ### Rate limiting
-- 300 req/мин на комбинацию IP + route-prefix (sliding window, in-memory).
-- Response включает `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`.
+- 300 req/мин на комбинацию IP + route-prefix (sliding window)
+- **SCADA-specific**: отдельный token bucket rate limiter в DMZ proxy
 
 ### Logging
-- JSON-line структурированный лог.
-- **Secret redaction**: ключи `password`, `token`, `secret`, `api_key`, `authorization`, `private_key` автоматически маскируются (`***REDACTED***`) перед записью.
-- Request ID (`X-Request-Id`) прокидывается во все логи для корреляции.
+- JSON-line структурированный лог
+- **Secret redaction**: автоматическое маскирование секретов
+- **Kafka audit stream**: все события публикуются в `aegisops.audit` топик для SIEM интеграции
+- **DMZ audit trail**: каждое SCADA действие (allowed/blocked) логируется
 
 ### Storage secrets
-- **Server secret** (для HMAC подписи JWT): генерируется при первом запуске (48 байт `crypto.randomBytes`), хранится в `settings` таблице. Приоритет: env `AEGISOPS_SECRET` → БД.
-- **Connector credentials** (1C passwords, SAP tokens, Telegram bot token): хранятся в `connectors.auth_payload` как JSON. **TODO**: добавить шифрование через serverSecret, сейчас — plaintext в БД.
-- **Android**: API-key и base URL хранятся в `flutter_secure_storage` → шифрованный SharedPreferences (AES-256, ключ в Android KeyStore).
-
-### Mobile-specific
-- QR-код сопряжения содержит только `{ base, code }`. Код — 6 цифр, действует 5 минут, одноразовый.
-- После consume → API-key выдаётся один раз и сохраняется в KeyStore. Не восстанавливается.
-- APK не имеет жёстко прошитых адресов/ключей.
+- **Server secret**: env `AEGISOPS_SECRET` → или автогенерированный (48 байт) в settings
+- **Connector credentials**: AES-256-GCM зашифрованы в `connectors.encrypted_auth_payload`
+- **Android**: API-key в `flutter_secure_storage` (AES-256, Android KeyStore)
 
 ## Рекомендации для production deployment
 
 ### Обязательно
-- [ ] Установите собственный `AEGISOPS_SECRET` (env) вместо автогенерированного.
-- [ ] Установите admin password (`POST /api/auth/bootstrap`).
-- [ ] Переключитесь на `AEGISOPS_ENFORCE_LOCAL_AUTH=1` для защищённых сред.
-- [ ] Используйте custom Cloudflare Tunnel с именованным именем (а не `trycloudflare.com` — он публично-доступный и легко сканируется).
-- [ ] Шифруйте `connectors.auth_payload` — текущая версия хранит в plaintext.
-- [ ] Настройте signing для Android release (`android/app/build.gradle` → `signingConfigs.release`).
-- [ ] Отзывайте неиспользуемые API-keys в `Settings → API keys`.
+- [x] ~~Шифруйте `connectors.auth_payload`~~ — **Реализовано в v2.0** (AES-256-GCM)
+- [x] ~~Изолируйте SCADA подключение~~ — **Реализовано в v2.0** (DMZ proxy, ISA/IEC 62443)
+- [ ] Установите собственный `AEGISOPS_SECRET` (env)
+- [ ] Установите admin password (`POST /api/auth/bootstrap`)
+- [ ] Переключитесь на `AEGISOPS_ENFORCE_LOCAL_AUTH=1`
+- [ ] Используйте custom Cloudflare Tunnel
+- [ ] Настройте DMZ proxy для каждого OPC UA коннектора (`POST /api/dmz/proxies`)
+- [ ] Настройте signing для Android release
 
 ### Желательно
-- [ ] Переход на HTTPS для localhost через self-signed сертификат (для тех, кто держит AegisOps на отдельной машине в LAN).
-- [ ] Интеграция с корпоративным SSO (Azure AD, Keycloak) — добавить OIDC middleware.
-- [ ] Аудит-логи отправлять в SIEM (Splunk, Elastic). Все события уже пишутся в `audit_log` таблицу.
-- [ ] Регулярная ротация `server_secret` с переиздачей JWT.
+- [ ] Переход на HTTPS для localhost через self-signed сертификат
+- [ ] Интеграция с корпоративным SSO (Azure AD, Keycloak) — OIDC middleware
+- [ ] Аудит-логи → SIEM (Splunk, Elastic) через Kafka `aegisops.audit` топик
+- [ ] Регулярная ротация `server_secret`
+- [ ] TimescaleDB continuous aggregate refresh policies
+- [ ] Kafka SSL/SASL для production кластера
 
 ## Reporting vulnerabilities
 
-Если вы нашли уязвимость, **не открывайте публичный issue**.  
+Если вы нашли уязвимость, **не открывайте публичный issue**.
 Напишите на: security@<your-domain> (заменить на реальный).

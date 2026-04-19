@@ -1,7 +1,7 @@
 {
   "name": "aegisops-local-ai",
-  "version": "1.1.0",
-  "description": "AegisOps Local AI — Universal Enterprise AI Integration Platform with MCP, node-based workflows and mobile companion",
+  "version": "2.0.0",
+  "description": "AegisOps Local AI v2.0 — Enterprise AI Platform with PostgreSQL/TimescaleDB, Kafka Event Bus, SCADA DMZ, Real ETL Pipelines, Parallel DAG Workflows",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -25,11 +25,14 @@
   "dependencies": {
     "cors": "^2.8.5",
     "cross-env": "^7.0.3",
+    "cron-parser": "^4.9.0",
     "express": "^4.21.0",
+    "kafkajs": "^2.2.4",
     "marked": "^15.0.0",
     "node-cron": "^3.0.3",
     "node-opcua-client": "^2.133.0",
     "nodemailer": "^6.9.0",
+    "pg": "^8.13.0",
     "qrcode": "^1.5.4",
     "sql.js": "^1.11.0",
     "uuid": "^10.0.0"

@@ -1,6 +1,15 @@
 /**
- * AegisOps Local AI — Server Core (Real Connectors Edition)
+ * AegisOps Local AI — Server Core v2.0 (Production Edition)
  * All connector calls are REAL network requests — no demo/simulation data.
+ *
+ * New in v2.0:
+ *   - PostgreSQL/TimescaleDB as primary database (SQLite fallback)
+ *   - Apache Kafka as central event bus (EventEmitter fallback)
+ *   - Real ETL pipelines with clean/transform/enrich/validate/load phases
+ *   - SCADA DMZ security proxy (ISA/IEC 62443 compliant)
+ *   - Enhanced workflow engine with parallel DAG execution, cron scheduler, retry logic
+ *   - AES-256-GCM credential encryption for connector auth_payload
+ *   - Data retention cleanup service
  */
 const express = require('express');
 const cors = require('cors');
@@ -9,7 +18,10 @@ const fs = require('fs');
 const http = require('http');
 const { v4: uuidv4 } = require('uuid');
 
-const { initDB, getDB, queryAll, queryOne, runSQL, saveDB, nowISO } = require('./db');
+// Database: PostgreSQL/TimescaleDB with SQLite fallback
+const dbPg = require('./db/pg');
+const { initDB, queryAll, queryOne, runSQL, saveDB, nowISO, insertTelemetry, queryTelemetry, getDBInfo, cleanupOldData, shutdownDB, isPostgreSQL } = dbPg;
+
 const { createConnector, getConnectorTypes } = require('./connectors');
 const {
   rateLimiter, securityHeaders, inputSanitizer, payloadGuard,
@@ -25,8 +37,15 @@ const tunnel = require('./tunnel');
 const modelManager = require('./services/model-manager');
 const ollamaManager = require('./services/ollama-manager');
 
-// Writable data directory — defaults to __dirname/../data but can be overridden
-// for packaged Electron apps where __dirname is inside read-only ASAR.
+// New v2.0 modules
+const { eventBus, TOPICS } = require('./events/kafka');
+const { runETLPipeline, getETLRunLog, getTransformerTypes } = require('./services/etl/engine');
+const { dmzManager, SCADA_OPERATIONS, MODE_PERMISSIONS } = require('./security/dmz');
+const { initEncryptionKey, migrateCredentials, encryptCredentials, getConnectorCredentials } = require('./security/crypto');
+const { startScheduler, stopScheduler } = require('./workflow/scheduler');
+const { startRetentionJob, stopRetentionJob } = require('./services/retention');
+
+// Writable data directory
 let _dataDir = path.join(__dirname, '..', 'data');
 let REPORTS_DIR = path.join(_dataDir, 'generated_reports');
 
@@ -34,7 +53,6 @@ function ensureDir(dir) {
   try {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   } catch (e) {
-    // If the path exists as a file (ENOTDIR), use a fallback temp dir
     if (e.code === 'ENOTDIR') {
       const os = require('os');
       dir = path.join(os.tmpdir(), 'aegisops', path.basename(dir));
@@ -50,10 +68,17 @@ REPORTS_DIR = ensureDir(REPORTS_DIR);
 
 function uid() { return uuidv4().replace(/-/g, '').slice(0, 12); }
 
-function logEvent(eventType, payload) {
+async function logEvent(eventType, payload) {
   try {
-    runSQL('INSERT INTO audit_log (event_type, payload, created_at) VALUES (?, ?, ?)',
+    await runSQL('INSERT INTO audit_log (event_type, payload, created_at) VALUES (?, ?, ?)',
       [eventType, JSON.stringify(payload, null, 0), nowISO()]);
+
+    // Also publish to Kafka audit topic
+    await eventBus.produce(TOPICS.AUDIT, {
+      type: eventType,
+      payload,
+      timestamp: new Date().toISOString(),
+    });
   } catch (e) { console.error('Audit log error:', e.message); }
 }
 
@@ -64,8 +89,7 @@ function safeJSON(str, fallback) {
 
 /* ────────── AI layer (uses real Ollama connector) ────────── */
 async function askAI(prompt) {
-  // Find Ollama connector
-  const ollamaRow = queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
+  const ollamaRow = await queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
   if (ollamaRow) {
     try {
       const connector = createConnector(ollamaRow);
@@ -73,12 +97,11 @@ async function askAI(prompt) {
         { role: 'system', content: 'Ты enterprise AI-аналитик для газовых компаний и банков. Отвечай структурированно, с цифрами. Русский язык.' },
         { role: 'user', content: prompt },
       ]);
-      return result; // { provider: 'ollama', model, content }
+      return result;
     } catch (err) {
       // Ollama not available — fall through to fallback
     }
   }
-  // Fallback: built-in analyzer
   return { provider: 'fallback', model: 'built-in', content: generateFallbackAnalysis(prompt) };
 }
 
@@ -133,7 +156,7 @@ function generateHTMLReport(scenario, aiResult, collectedData) {
 </head>
 <body>
   <div class="wrap">
-    <div class="badge">AegisOps Local AI — Управленческий отчет</div>
+    <div class="badge">AegisOps Local AI v2.0 — Управленческий отчет</div>
     <h1>${scenario.name}</h1>
     <p class="meta">Сгенерировано: ${now} | AI: ${aiResult.provider} (${aiResult.model || 'built-in'})</p>
     <div class="card" style="margin-top:24px">
@@ -141,7 +164,7 @@ function generateHTMLReport(scenario, aiResult, collectedData) {
     </div>
     <div class="card"><h2>🤖 Аналитический вывод</h2><pre>${aiResult.content}</pre></div>
     <div class="card"><h2>📡 Данные коннекторов</h2>${connectorSections || '<p style="color:#8ea1c9">Нет данных</p>'}</div>
-    <div class="footer">AegisOps Local AI v1.0.0 • Конфиденциально • ${now}</div>
+    <div class="footer">AegisOps Local AI v2.0 • PostgreSQL/TimescaleDB • Kafka Event Bus • Конфиденциально • ${now}</div>
   </div>
 </body>
 </html>`;
@@ -153,10 +176,8 @@ function createApp() {
   app.disable('x-powered-by');
   app.set('trust proxy', true);
 
-  // CORS: allow same-origin + explicit mobile origins. For public tunneling,
-  // only the paired mobile app matters (API-key auth).
   app.use(cors({
-    origin: (origin, cb) => cb(null, true), // auth is enforced below
+    origin: (origin, cb) => cb(null, true),
     credentials: false,
     maxAge: 86400,
   }));
@@ -168,16 +189,16 @@ function createApp() {
   app.use(requestLogger);
   app.use('/api/', rateLimiter({ max: 300, windowMs: 60_000 }));
 
-  // Auth routes (login, keys, pairing) — no auth required to hit them
+  // Auth routes
   app.use('/api/auth', authRoutes);
 
-  // Remote routes are behind authMiddleware; localhost bypasses it by default.
+  // Protected routes
   app.use('/api/workflows', authMiddleware({ required: true }), workflowRoutes);
   app.use('/api/mcp', authMiddleware({ required: true }), mcpRoutes);
   app.use('/api/modules', moduleRoutes);
   app.use('/api/ai', aiEngineRoutes);
 
-  // Tunnel management (admin only)
+  // Tunnel management
   app.get('/api/tunnel/status', authMiddleware({ required: true }), (req, res) => res.json(tunnel.status()));
   app.post('/api/tunnel/start', authMiddleware({ scopes: ['*'] }), async (req, res) => {
     try {
@@ -201,29 +222,52 @@ function createApp() {
   app.use(express.static(path.join(__dirname, '..', 'public')));
   app.use('/reports', express.static(REPORTS_DIR));
 
-  /* ── Health ── */
-  app.get('/api/health', (req, res) => {
-    const c = queryOne('SELECT COUNT(*) as c FROM connectors');
-    const s = queryOne('SELECT COUNT(*) as c FROM scenarios');
-    const d = queryOne('SELECT COUNT(*) as c FROM documents');
-    res.json({ status: 'ok', product: 'AegisOps Local AI', version: '1.0.0', connectors: c?.c || 0, scenarios: s?.c || 0, documents: d?.c || 0, ts: nowISO() });
+  /* ── Health (enhanced with v2.0 infrastructure info) ── */
+  app.get('/api/health', async (req, res) => {
+    const c = await queryOne('SELECT COUNT(*) as c FROM connectors');
+    const s = await queryOne('SELECT COUNT(*) as c FROM scenarios');
+    const d = await queryOne('SELECT COUNT(*) as c FROM documents');
+    const dbInfo = getDBInfo();
+    const kafkaStats = eventBus.getStats();
+    res.json({
+      status: 'ok',
+      product: 'AegisOps Local AI',
+      version: '2.0.0',
+      database: dbInfo,
+      kafka: { mode: kafkaStats.kafkaAvailable ? 'kafka' : 'fallback', brokers: kafkaStats.brokers, produced: kafkaStats.produced, consumed: kafkaStats.consumed },
+      connectors: c?.c || 0,
+      scenarios: s?.c || 0,
+      documents: d?.c || 0,
+      dmz_proxies: dmzManager.getAllStats().length,
+      ts: nowISO(),
+    });
   });
 
   /* ── Dashboard ── */
-  app.get('/api/dashboard', (req, res) => {
-    const connectors = queryAll('SELECT * FROM connectors ORDER BY id');
-    const scenarios = queryAll('SELECT * FROM scenarios ORDER BY id');
-    const logs = queryAll('SELECT * FROM audit_log ORDER BY id DESC LIMIT 20');
-    const docs = queryAll('SELECT * FROM documents ORDER BY id DESC LIMIT 20');
-    const modules = queryAll('SELECT * FROM modules ORDER BY sort_order');
-    const trainingJobs = queryAll('SELECT * FROM training_jobs ORDER BY id DESC LIMIT 10');
-    connectors.forEach(c => { c.config = safeJSON(c.config, {}); c.auth_payload = safeJSON(c.auth_payload, {}); });
+  app.get('/api/dashboard', async (req, res) => {
+    const connectors = await queryAll('SELECT * FROM connectors ORDER BY id');
+    const scenarios = await queryAll('SELECT * FROM scenarios ORDER BY id');
+    const logs = await queryAll('SELECT * FROM audit_log ORDER BY id DESC LIMIT 20');
+    const docs = await queryAll('SELECT * FROM documents ORDER BY id DESC LIMIT 20');
+    const modules = await queryAll('SELECT * FROM modules ORDER BY sort_order');
+    const trainingJobs = await queryAll('SELECT * FROM training_jobs ORDER BY id DESC LIMIT 10');
+    connectors.forEach(c => {
+      c.config = safeJSON(c.config, {});
+      c.auth_payload = safeJSON(c.auth_payload, {});
+      // Don't expose encrypted payload to frontend
+      delete c.encrypted_auth_payload;
+    });
     scenarios.forEach(s => { s.config = safeJSON(s.config, {}); s.connector_ids = safeJSON(s.connector_ids, []); });
     res.json({
       hero: {
         title: 'AegisOps Local AI',
-        subtitle: 'Универсальная Enterprise AI-платформа с реальными коннекторами к 1C, SAP, SCADA, Telegram',
-        highlights: ['Реальные коннекторы (не симуляция)', 'Ollama LLM', '1C / SAP OData', 'SCADA OPC UA', 'Telegram Bot', 'Генерация отчетов'],
+        subtitle: 'Enterprise AI-платформа: PostgreSQL/TimescaleDB, Kafka, SCADA DMZ, ETL, DAG Workflows',
+        highlights: ['PostgreSQL + TimescaleDB', 'Apache Kafka Event Bus', 'SCADA DMZ (ISA 62443)', 'Real ETL Pipelines', 'Parallel DAG Workflows', 'Ollama LLM'],
+      },
+      infrastructure: {
+        database: getDBInfo(),
+        kafka: eventBus.getStats(),
+        dmz: dmzManager.getAllStats(),
       },
       modules, connectors, scenarios, logs, documents: docs, trainingJobs,
     });
@@ -232,46 +276,73 @@ function createApp() {
   /* ── Connector types ── */
   app.get('/api/connector-types', (req, res) => res.json(getConnectorTypes()));
 
-  /* ── Connectors CRUD ── */
-  app.get('/api/connectors', (req, res) => {
-    const rows = queryAll('SELECT * FROM connectors ORDER BY id');
-    rows.forEach(r => { r.config = safeJSON(r.config, {}); r.auth_payload = safeJSON(r.auth_payload, {}); });
+  /* ── Connectors CRUD (with credential encryption) ── */
+  app.get('/api/connectors', async (req, res) => {
+    const rows = await queryAll('SELECT * FROM connectors ORDER BY id');
+    rows.forEach(r => {
+      r.config = safeJSON(r.config, {});
+      r.auth_payload = safeJSON(r.auth_payload, {});
+      delete r.encrypted_auth_payload; // Never expose to client
+    });
     res.json(rows);
   });
 
-  app.post('/api/connectors', (req, res) => {
+  app.post('/api/connectors', async (req, res) => {
     const { name, type, base_url, auth_mode, auth_payload, config, enabled } = req.body;
     const now = nowISO();
-    const result = runSQL(`INSERT INTO connectors (name, type, base_url, auth_mode, auth_payload, config, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [name, type, base_url || '', auth_mode || 'none', JSON.stringify(auth_payload || {}), JSON.stringify(config || {}), enabled !== false ? 1 : 0, now, now]);
-    const row = queryOne('SELECT * FROM connectors WHERE id = ?', [result.lastInsertRowid]);
+
+    // Encrypt credentials before storage
+    const encryptedPayload = encryptCredentials(auth_payload || {});
+
+    const result = await runSQL(
+      `INSERT INTO connectors (name, type, base_url, auth_mode, auth_payload, encrypted_auth_payload, config, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [name, type, base_url || '', auth_mode || 'none', '{}', encryptedPayload, JSON.stringify(config || {}), enabled !== false ? 1 : 0, now, now]
+    );
+    const row = await queryOne('SELECT * FROM connectors WHERE id = ?', [result.lastInsertRowid]);
+    if (row) { row.config = safeJSON(row.config, {}); row.auth_payload = safeJSON(row.auth_payload, {}); delete row.encrypted_auth_payload; }
     logEvent('connector.created', { id: row?.id, name });
+
+    // Publish to Kafka
+    await eventBus.produce(TOPICS.CONNECTOR_STATUS, { event: 'created', connector_id: row?.id, name, type });
+
     res.json(row);
   });
 
-  app.put('/api/connectors/:id', (req, res) => {
+  app.put('/api/connectors/:id', async (req, res) => {
     const { name, type, base_url, auth_mode, auth_payload, config, enabled } = req.body;
-    runSQL(`UPDATE connectors SET name=?, type=?, base_url=?, auth_mode=?, auth_payload=?, config=?, enabled=?, updated_at=? WHERE id=?`,
-      [name, type, base_url || '', auth_mode || 'none', JSON.stringify(auth_payload || {}), JSON.stringify(config || {}), enabled ? 1 : 0, nowISO(), req.params.id]);
-    const row = queryOne('SELECT * FROM connectors WHERE id = ?', [req.params.id]);
+    const now = nowISO();
+
+    // Encrypt credentials before storage
+    const encryptedPayload = encryptCredentials(auth_payload || {});
+
+    await runSQL(
+      `UPDATE connectors SET name=?, type=?, base_url=?, auth_mode=?, auth_payload=?, encrypted_auth_payload=?, config=?, enabled=?, updated_at=? WHERE id=?`,
+      [name, type, base_url || '', auth_mode || 'none', '{}', encryptedPayload, JSON.stringify(config || {}), enabled ? 1 : 0, now, req.params.id]
+    );
+    const row = await queryOne('SELECT * FROM connectors WHERE id = ?', [req.params.id]);
+    if (row) { row.config = safeJSON(row.config, {}); row.auth_payload = safeJSON(row.auth_payload, {}); delete row.encrypted_auth_payload; }
     logEvent('connector.updated', { id: req.params.id });
     res.json(row);
   });
 
-  app.delete('/api/connectors/:id', (req, res) => {
-    runSQL('DELETE FROM connectors WHERE id = ?', [req.params.id]);
+  app.delete('/api/connectors/:id', async (req, res) => {
+    await runSQL('DELETE FROM connectors WHERE id = ?', [req.params.id]);
     logEvent('connector.deleted', { id: req.params.id });
     res.json({ ok: true });
   });
 
   /* ── Real connector test ── */
   app.post('/api/connectors/:id/test', async (req, res) => {
-    const row = queryOne('SELECT * FROM connectors WHERE id = ?', [req.params.id]);
+    const row = await queryOne('SELECT * FROM connectors WHERE id = ?', [req.params.id]);
     if (!row) return res.status(404).json({ error: 'not found' });
     try {
       const connector = createConnector(row);
       const result = await connector.testConnection();
       logEvent('connector.tested', { id: req.params.id, status: result.status });
+
+      // Publish status to Kafka
+      await eventBus.produce(TOPICS.CONNECTOR_STATUS, { connector_id: parseInt(req.params.id), status: result.status, type: row.type });
+
       res.json(result);
     } catch (err) {
       res.json({ status: 'error', error: err.message });
@@ -280,12 +351,50 @@ function createApp() {
 
   /* ── Real connector data fetch ── */
   app.post('/api/connectors/:id/query', async (req, res) => {
-    const row = queryOne('SELECT * FROM connectors WHERE id = ?', [req.params.id]);
+    const row = await queryOne('SELECT * FROM connectors WHERE id = ?', [req.params.id]);
     if (!row) return res.status(404).json({ error: 'not found' });
+
+    // DMZ check for OPC UA / SCADA connections
+    if (row.type === 'opc_ua') {
+      const proxy = dmzManager.getProxyForConnector(parseInt(req.params.id));
+      const auth = proxy.authorize({
+        operation: 'read',
+        nodeId: (req.body?.nodes || [])[0] || 'ns=0;i=84',
+        metadata: { source: 'api', user: req.auth?.label || 'unknown' },
+      });
+      if (!auth.authorized) {
+        return res.status(403).json({ error: 'DMZ Security Proxy blocked this request', reason: auth.reason });
+      }
+    }
+
     try {
       const connector = createConnector(row);
       const result = await connector.fetchData(req.body);
       logEvent('connector.queried', { id: req.params.id });
+
+      // Publish to Kafka
+      await eventBus.produce(TOPICS.CONNECTOR_DATA, {
+        connector_id: parseInt(req.params.id),
+        connector_type: row.type,
+        data_preview: JSON.stringify(result).slice(0, 500),
+        timestamp: new Date().toISOString(),
+      });
+
+      // Store SCADA telemetry in TimescaleDB
+      if (row.type === 'opc_ua' && result?.readings) {
+        for (const reading of result.readings) {
+          await insertTelemetry({
+            connector_id: parseInt(req.params.id),
+            node_id: reading.nodeId,
+            metric_name: reading.browseName,
+            value: typeof reading.value === 'number' ? reading.value : parseFloat(reading.value),
+            quality: reading.statusCode,
+            metadata: { dataType: reading.dataType },
+            time: reading.sourceTimestamp,
+          });
+        }
+      }
+
       res.json(result);
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -294,7 +403,7 @@ function createApp() {
 
   /* ── Real connector schema discovery ── */
   app.post('/api/connectors/:id/discover', async (req, res) => {
-    const row = queryOne('SELECT * FROM connectors WHERE id = ?', [req.params.id]);
+    const row = await queryOne('SELECT * FROM connectors WHERE id = ?', [req.params.id]);
     if (!row) return res.status(404).json({ error: 'not found' });
     try {
       const connector = createConnector(row);
@@ -307,53 +416,52 @@ function createApp() {
   });
 
   /* ── Scenarios CRUD ── */
-  app.get('/api/scenarios', (req, res) => {
-    const rows = queryAll('SELECT * FROM scenarios ORDER BY id');
+  app.get('/api/scenarios', async (req, res) => {
+    const rows = await queryAll('SELECT * FROM scenarios ORDER BY id');
     rows.forEach(r => { r.config = safeJSON(r.config, {}); r.connector_ids = safeJSON(r.connector_ids, []); });
     res.json(rows);
   });
 
-  app.post('/api/scenarios', (req, res) => {
+  app.post('/api/scenarios', async (req, res) => {
     const { name, category, cron_expr, connector_ids, objective, delivery_channel, config, enabled } = req.body;
     const now = nowISO();
-    const result = runSQL(`INSERT INTO scenarios (name, category, cron_expr, connector_ids, objective, delivery_channel, config, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    const result = await runSQL(`INSERT INTO scenarios (name, category, cron_expr, connector_ids, objective, delivery_channel, config, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [name, category, cron_expr || '', JSON.stringify(connector_ids || []), objective, delivery_channel || 'none', JSON.stringify(config || {}), enabled !== false ? 1 : 0, now, now]);
-    const row = queryOne('SELECT * FROM scenarios WHERE id = ?', [result.lastInsertRowid]);
+    const row = await queryOne('SELECT * FROM scenarios WHERE id = ?', [result.lastInsertRowid]);
     logEvent('scenario.created', { id: row?.id, name });
     res.json(row);
   });
 
-  app.delete('/api/scenarios/:id', (req, res) => {
-    runSQL('DELETE FROM scenarios WHERE id = ?', [req.params.id]);
+  app.delete('/api/scenarios/:id', async (req, res) => {
+    await runSQL('DELETE FROM scenarios WHERE id = ?', [req.params.id]);
     logEvent('scenario.deleted', { id: req.params.id });
     res.json({ ok: true });
   });
 
-  app.put('/api/scenarios/:id', (req, res) => {
+  app.put('/api/scenarios/:id', async (req, res) => {
     const { name, category, cron_expr, connector_ids, objective, delivery_channel, config, enabled } = req.body;
-    const existing = queryOne('SELECT * FROM scenarios WHERE id = ?', [req.params.id]);
+    const existing = await queryOne('SELECT * FROM scenarios WHERE id = ?', [req.params.id]);
     if (!existing) return res.status(404).json({ error: 'Scenario not found' });
-    runSQL(`UPDATE scenarios SET name=?, category=?, cron_expr=?, connector_ids=?, objective=?, delivery_channel=?, config=?, enabled=?, updated_at=? WHERE id=?`,
+    await runSQL(`UPDATE scenarios SET name=?, category=?, cron_expr=?, connector_ids=?, objective=?, delivery_channel=?, config=?, enabled=?, updated_at=? WHERE id=?`,
       [name || existing.name, category || existing.category, cron_expr ?? existing.cron_expr,
        JSON.stringify(connector_ids || safeJSON(existing.connector_ids, [])),
        objective ?? existing.objective, delivery_channel || existing.delivery_channel,
        JSON.stringify(config || safeJSON(existing.config, {})),
        enabled !== undefined ? (enabled ? 1 : 0) : existing.enabled,
        nowISO(), req.params.id]);
-    const row = queryOne('SELECT * FROM scenarios WHERE id = ?', [req.params.id]);
+    const row = await queryOne('SELECT * FROM scenarios WHERE id = ?', [req.params.id]);
     logEvent('scenario.updated', { id: req.params.id });
     res.json(row);
   });
 
   /* ── Run scenario (REAL connectors) ── */
   app.post('/api/scenarios/:id/run', async (req, res) => {
-    const row = queryOne('SELECT * FROM scenarios WHERE id = ?', [req.params.id]);
+    const row = await queryOne('SELECT * FROM scenarios WHERE id = ?', [req.params.id]);
     if (!row) return res.status(404).json({ error: 'Scenario not found' });
     const scenario = { ...row, config: safeJSON(row.config, {}), connector_ids: safeJSON(row.connector_ids, []) };
     const { ask, send_to_telegram } = req.body || {};
 
-    // Collect REAL data from connectors
-    const allConnectors = queryAll('SELECT * FROM connectors');
+    const allConnectors = await queryAll('SELECT * FROM connectors');
     const collected = [];
     const targetIds = scenario.connector_ids.length > 0 ? scenario.connector_ids : allConnectors.filter(c => c.enabled).map(c => c.id);
 
@@ -369,23 +477,20 @@ function createApp() {
       }
     }
 
-    // AI analysis
     const prompt = `Сценарий: ${scenario.name}\nЦель: ${scenario.objective}\nДоп. запрос: ${ask || 'нет'}\nДанные коннекторов: ${JSON.stringify(collected, null, 2)}\n\nПодготовь управленческий отчет:\n1. Итоговый статус\n2. Ключевые отклонения и риски\n3. Рекомендованные действия\n4. Что автоматизировать дальше`;
     const aiResult = await askAI(prompt);
 
-    // Generate report
     const reportId = uid();
     const html = generateHTMLReport(scenario, aiResult, collected);
     const reportPath = path.join(REPORTS_DIR, `report_${reportId}.html`);
     fs.writeFileSync(reportPath, html, 'utf-8');
 
-    runSQL('INSERT INTO documents (title, kind, scenario_id, path, format, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    await runSQL('INSERT INTO documents (title, kind, scenario_id, path, format, created_at) VALUES (?, ?, ?, ?, ?, ?)',
       [scenario.name, 'report', scenario.id, reportPath, 'html', nowISO()]);
 
-    // Real Telegram send
     let telegram = { status: 'skipped' };
     if (send_to_telegram || scenario.delivery_channel === 'telegram') {
-      const tgRow = queryOne("SELECT * FROM connectors WHERE type='telegram' LIMIT 1");
+      const tgRow = await queryOne("SELECT * FROM connectors WHERE type='telegram' LIMIT 1");
       if (tgRow) {
         try {
           const tgConn = createConnector(tgRow);
@@ -406,23 +511,22 @@ function createApp() {
   });
 
   /* ── Modules ── */
-  app.get('/api/modules', (req, res) => res.json(queryAll('SELECT * FROM modules ORDER BY sort_order')));
+  app.get('/api/modules', async (req, res) => res.json(await queryAll('SELECT * FROM modules ORDER BY sort_order')));
 
   /* ── Documents ── */
-  app.get('/api/documents', (req, res) => res.json(queryAll('SELECT * FROM documents ORDER BY id DESC')));
+  app.get('/api/documents', async (req, res) => res.json(await queryAll('SELECT * FROM documents ORDER BY id DESC')));
 
-  app.get('/api/documents/:id/download', (req, res) => {
-    const row = queryOne('SELECT * FROM documents WHERE id = ?', [req.params.id]);
+  app.get('/api/documents/:id/download', async (req, res) => {
+    const row = await queryOne('SELECT * FROM documents WHERE id = ?', [req.params.id]);
     if (!row) return res.status(404).json({ error: 'not found' });
     if (!fs.existsSync(row.path)) return res.status(404).json({ error: 'file missing' });
     res.download(row.path);
   });
 
-  /* ── AI Assistant (real Ollama) ── */
+  /* ── AI Assistant ── */
   app.post('/api/assistant', async (req, res) => {
     const { prompt, model } = req.body;
     if (!prompt?.trim()) return res.status(400).json({ error: 'prompt required' });
-    // If model specified, use it for this request
     if (model) ollamaManager.setModel(model);
     const result = await askAI(prompt);
     logEvent('assistant.asked', { prompt: prompt.slice(0, 200), provider: result.provider, model: result.model });
@@ -435,8 +539,6 @@ function createApp() {
     if (!prompt?.trim()) return res.status(400).json({ error: 'prompt required' });
 
     const activeModel = model || ollamaManager.getActiveModel();
-
-    // Set up SSE
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -448,8 +550,7 @@ function createApp() {
 
     sendSSE('meta', { model: activeModel, provider: 'ollama' });
 
-    // Try Ollama streaming
-    const ollamaRow = queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
+    const ollamaRow = await queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
     const ollamaUrl = ollamaRow?.base_url || ollamaManager._baseUrl;
 
     try {
@@ -481,38 +582,19 @@ function createApp() {
               sendSSE('token', { content: data.message.content, done: false });
             }
             if (data.done) {
-              sendSSE('done', {
-                content: fullContent,
-                model: activeModel,
-                provider: 'ollama',
-                evalCount: data.eval_count,
-                totalDuration: data.total_duration,
-              });
+              sendSSE('done', { content: fullContent, model: activeModel, provider: 'ollama', evalCount: data.eval_count, totalDuration: data.total_duration });
             }
           }
-        } catch (e) {
-          // Non-JSON chunk, ignore
-        }
+        } catch (e) {}
       });
 
       reader.on('end', () => {
-        if (!res.writableEnded) {
-          sendSSE('done', { content: fullContent, model: activeModel, provider: 'ollama' });
-          res.end();
-        }
+        if (!res.writableEnded) { sendSSE('done', { content: fullContent, model: activeModel, provider: 'ollama' }); res.end(); }
       });
 
-      reader.on('error', (err) => {
-        sendSSE('error', { error: err.message });
-        res.end();
-      });
-
-      req.on('close', () => {
-        reader.destroy();
-      });
-
+      reader.on('error', (err) => { sendSSE('error', { error: err.message }); res.end(); });
+      req.on('close', () => { reader.destroy(); });
     } catch (err) {
-      // Fallback to non-streaming
       const result = await askAI(prompt);
       sendSSE('done', result);
       res.end();
@@ -521,7 +603,7 @@ function createApp() {
     logEvent('assistant.streamed', { prompt: prompt.slice(0, 200), model: activeModel });
   });
 
-  /* ── Module analytics (real AI) ── */
+  /* ── Module analytics ── */
   const analyticPrompts = {
     'gas-balance': 'Подготовь сводку по газовому балансу: поступление, потребление, ПХГ, импорт/экспорт, давление ГТС.',
     'consumption': 'Аналитика потребления: заявки vs факт, дисциплина потребления, перебор/недобор.',
@@ -537,116 +619,194 @@ function createApp() {
   }
 
   /* ── Training jobs ── */
-  app.get('/api/training', (req, res) => res.json(queryAll('SELECT * FROM training_jobs ORDER BY id DESC')));
-  app.post('/api/training', (req, res) => {
+  app.get('/api/training', async (req, res) => res.json(await queryAll('SELECT * FROM training_jobs ORDER BY id DESC')));
+  app.post('/api/training', async (req, res) => {
     const { name, base_model, dataset_path, method, config } = req.body;
     const now = nowISO();
-    const result = runSQL(`INSERT INTO training_jobs (name, base_model, dataset_path, method, config, status, progress, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?)`,
+    const result = await runSQL(`INSERT INTO training_jobs (name, base_model, dataset_path, method, config, status, progress, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?)`,
       [name, base_model || 'qwen2.5:7b', dataset_path || '', method || 'lora', JSON.stringify(config || {}), now, now]);
     logEvent('training.created', { id: result.lastInsertRowid, name });
-    res.json(queryOne('SELECT * FROM training_jobs WHERE id = ?', [result.lastInsertRowid]));
+    res.json(await queryOne('SELECT * FROM training_jobs WHERE id = ?', [result.lastInsertRowid]));
   });
 
-  // Start a pending training job (basic stub execution with progress simulation)
   app.post('/api/training/:id/start', async (req, res) => {
-    const job = queryOne('SELECT * FROM training_jobs WHERE id = ?', [req.params.id]);
+    const job = await queryOne('SELECT * FROM training_jobs WHERE id = ?', [req.params.id]);
     if (!job) return res.status(404).json({ error: 'Training job not found' });
     if (job.status === 'running') return res.status(400).json({ error: 'Already running' });
     if (job.status === 'completed') return res.status(400).json({ error: 'Already completed' });
 
-    runSQL("UPDATE training_jobs SET status='running', progress=0, updated_at=? WHERE id=?", [nowISO(), req.params.id]);
+    await runSQL("UPDATE training_jobs SET status='running', progress=0, updated_at=? WHERE id=?", [nowISO(), req.params.id]);
     logEvent('training.started', { id: req.params.id });
     res.json({ ok: true, status: 'running' });
 
-    // Simulate training progress in background
+    // Training simulation (Ollama-based fine-tuning would go here)
     const jobId = req.params.id;
     const totalSteps = 10;
     for (let step = 1; step <= totalSteps; step++) {
       await new Promise(r => setTimeout(r, 2000 + Math.random() * 2000));
       const progress = Math.round((step / totalSteps) * 100);
-      const currentJob = queryOne('SELECT * FROM training_jobs WHERE id = ?', [jobId]);
+      const currentJob = await queryOne('SELECT * FROM training_jobs WHERE id = ?', [jobId]);
       if (!currentJob || currentJob.status !== 'running') break;
-      runSQL("UPDATE training_jobs SET progress=?, updated_at=? WHERE id=?", [progress, nowISO(), jobId]);
+      await runSQL("UPDATE training_jobs SET progress=?, updated_at=? WHERE id=?", [progress, nowISO(), jobId]);
       if (step === totalSteps) {
-        runSQL("UPDATE training_jobs SET status='completed', progress=100, updated_at=? WHERE id=?", [nowISO(), jobId]);
+        await runSQL("UPDATE training_jobs SET status='completed', progress=100, updated_at=? WHERE id=?", [nowISO(), jobId]);
         logEvent('training.completed', { id: jobId });
       }
     }
   });
 
-  // Cancel a running training job
-  app.post('/api/training/:id/cancel', (req, res) => {
-    const job = queryOne('SELECT * FROM training_jobs WHERE id = ?', [req.params.id]);
-    if (!job) return res.status(404).json({ error: 'Not found' });
-    runSQL("UPDATE training_jobs SET status='cancelled', updated_at=? WHERE id=?", [nowISO(), req.params.id]);
+  app.post('/api/training/:id/cancel', async (req, res) => {
+    await runSQL("UPDATE training_jobs SET status='cancelled', updated_at=? WHERE id=?", [nowISO(), req.params.id]);
     logEvent('training.cancelled', { id: req.params.id });
     res.json({ ok: true });
   });
 
-  /* ── ETL Pipelines ── */
-  app.get('/api/etl', (req, res) => res.json(queryAll('SELECT * FROM etl_pipelines ORDER BY id DESC')));
-  app.post('/api/etl', (req, res) => {
+  /* ════════════════════════════════════════════════════════
+     ═══  v2.0 NEW API ROUTES  ════════════════════════════
+     ════════════════════════════════════════════════════════ */
+
+  /* ── Real ETL Pipelines (replaces stub implementation) ── */
+  app.get('/api/etl', async (req, res) => res.json(await queryAll('SELECT * FROM etl_pipelines ORDER BY id DESC')));
+
+  app.post('/api/etl', async (req, res) => {
     const { name, source_connector_id, target, schedule, config } = req.body;
-    const result = runSQL(`INSERT INTO etl_pipelines (name, source_connector_id, target, schedule, config, status, created_at) VALUES (?, ?, ?, ?, ?, 'idle', ?)`,
+    const result = await runSQL(`INSERT INTO etl_pipelines (name, source_connector_id, target, schedule, config, status, created_at) VALUES (?, ?, ?, ?, ?, 'idle', ?)`,
       [name, source_connector_id || null, target || 'local_db', schedule || '', JSON.stringify(config || {}), nowISO()]);
     logEvent('etl.created', { id: result.lastInsertRowid, name });
-    res.json(queryOne('SELECT * FROM etl_pipelines WHERE id = ?', [result.lastInsertRowid]));
+    res.json(await queryOne('SELECT * FROM etl_pipelines WHERE id = ?', [result.lastInsertRowid]));
   });
 
-  // Run an ETL pipeline
+  // Run ETL pipeline with real Extract → Clean → Transform → Enrich → Validate → Load
   app.post('/api/etl/:id/run', async (req, res) => {
-    const pipeline = queryOne('SELECT * FROM etl_pipelines WHERE id = ?', [req.params.id]);
+    const pipeline = await queryOne('SELECT * FROM etl_pipelines WHERE id = ?', [req.params.id]);
     if (!pipeline) return res.status(404).json({ error: 'Pipeline not found' });
 
-    runSQL("UPDATE etl_pipelines SET status='running' WHERE id=?", [req.params.id]);
     logEvent('etl.started', { id: req.params.id, name: pipeline.name });
-    res.json({ ok: true, status: 'running' });
+    res.json({ ok: true, status: 'running', message: 'ETL pipeline executing: Extract → Clean → Transform → Enrich → Validate → Load' });
 
-    // Simulate ETL execution in background
-    const etlId = req.params.id;
-    const connId = pipeline.source_connector_id;
-    let result = { rows: 0, status: 'completed' };
-    if (connId) {
-      const connRow = queryOne('SELECT * FROM connectors WHERE id = ?', [connId]);
-      if (connRow) {
-        try {
-          const connector = createConnector(connRow);
-          const data = await connector.fetchData({});
-          result.rows = Array.isArray(data) ? data.length : (data.records || 1);
-        } catch (err) {
-          result.status = 'error';
-          result.error = err.message;
-        }
-      }
+    // Execute real ETL pipeline in background
+    try {
+      const result = await runETLPipeline(parseInt(req.params.id));
+      logEvent('etl.completed', {
+        id: req.params.id,
+        status: result.status,
+        rows_extracted: result.rows_extracted,
+        rows_transformed: result.rows_transformed,
+        rows_loaded: result.rows_loaded,
+        rows_rejected: result.rows_rejected,
+        total_ms: result.total_ms,
+      });
+    } catch (err) {
+      logEvent('etl.error', { id: req.params.id, error: err.message });
     }
-    await new Promise(r => setTimeout(r, 1500));
-    runSQL("UPDATE etl_pipelines SET status=?, last_run_at=? WHERE id=?", [result.status, nowISO(), etlId]);
-    logEvent('etl.completed', { id: etlId, status: result.status, rows: result.rows });
   });
 
-  // Delete ETL pipeline
-  app.delete('/api/etl/:id', (req, res) => {
-    runSQL('DELETE FROM etl_pipelines WHERE id = ?', [req.params.id]);
+  // Get ETL pipeline run history
+  app.get('/api/etl/:id/runs', async (req, res) => {
+    const runs = await getETLRunLog(parseInt(req.params.id), parseInt(req.query.limit) || 20);
+    res.json(runs);
+  });
+
+  // Get ETL transformer types (for pipeline builder UI)
+  app.get('/api/etl/transformers', (req, res) => res.json(getTransformerTypes()));
+
+  app.delete('/api/etl/:id', async (req, res) => {
+    await runSQL('DELETE FROM etl_pipelines WHERE id = ?', [req.params.id]);
     logEvent('etl.deleted', { id: req.params.id });
     res.json({ ok: true });
   });
 
+  /* ── SCADA DMZ Security Proxy ── */
+  app.get('/api/dmz/proxies', (req, res) => res.json(dmzManager.getAllStats()));
+
+  app.post('/api/dmz/proxies', authMiddleware({ scopes: ['*'] }), async (req, res) => {
+    try {
+      const proxy = await dmzManager.createProxy(req.body);
+      logEvent('dmz.proxy_created', proxy);
+      res.json(proxy);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Emergency stop ALL SCADA proxies
+  app.post('/api/dmz/emergency-stop', authMiddleware({ scopes: ['*'] }), (req, res) => {
+    const { reason } = req.body || {};
+    dmzManager.emergencyStopAll(reason || 'manual');
+    logEvent('dmz.emergency_stop', { reason, user: req.auth?.label });
+    res.json({ stopped: true, reason: reason || 'manual' });
+  });
+
+  // Release emergency stop
+  app.post('/api/dmz/:id/release', authMiddleware({ scopes: ['*'] }), (req, res) => {
+    const proxy = dmzManager.getProxyForConnector(parseInt(req.params.id));
+    proxy.releaseEmergencyStop();
+    logEvent('dmz.released', { proxy_id: req.params.id });
+    res.json({ released: true });
+  });
+
+  // DMZ proxy modes info
+  app.get('/api/dmz/modes', (req, res) => res.json({
+    modes: Object.entries(MODE_PERMISSIONS).map(([mode, ops]) => ({ mode, allowed_operations: ops })),
+    operations: SCADA_OPERATIONS,
+  }));
+
+  /* ── Kafka Event Bus Status ── */
+  app.get('/api/events/status', (req, res) => res.json(eventBus.getStats()));
+  app.get('/api/events/topics', (req, res) => res.json(TOPICS));
+
+  /* ── Telemetry API (TimescaleDB) ── */
+  app.get('/api/telemetry', async (req, res) => {
+    const { connector_id, node_id, metric_name, start_time, end_time, limit, aggregate } = req.query;
+    const data = await queryTelemetry({
+      connector_id: connector_id ? parseInt(connector_id) : null,
+      node_id: node_id || null,
+      metric_name: metric_name || null,
+      start_time: start_time || null,
+      end_time: end_time || null,
+      limit: parseInt(limit) || 1000,
+      aggregate: aggregate || 'raw',
+    });
+    res.json(data);
+  });
+
+  // Insert telemetry reading
+  app.post('/api/telemetry', async (req, res) => {
+    const { connector_id, node_id, metric_name, value, quality, metadata, time } = req.body;
+    await insertTelemetry({ connector_id, node_id, metric_name, value, quality, metadata, time });
+    logEvent('telemetry.inserted', { connector_id, node_id, metric_name });
+    res.json({ ok: true });
+  });
+
+  /* ── Database Info ── */
+  app.get('/api/db/info', authMiddleware({ scopes: ['*'] }), (req, res) => res.json(getDBInfo()));
+
+  // Manual data retention cleanup
+  app.post('/api/db/cleanup', authMiddleware({ scopes: ['*'] }), async (req, res) => {
+    const { retention_days } = req.body || {};
+    const setting = await queryOne("SELECT value FROM settings WHERE key = 'data_retention_days'");
+    const days = retention_days || parseInt(setting?.value || '365');
+    const result = await cleanupOldData(days);
+    logEvent('db.cleanup', { retention_days: days, cleaned: result.cleaned });
+    res.json(result);
+  });
+
   /* ── Audit ── */
-  app.get('/api/audit', (req, res) => {
+  app.get('/api/audit', async (req, res) => {
     const limit = parseInt(req.query.limit) || 50;
-    res.json(queryAll('SELECT * FROM audit_log ORDER BY id DESC LIMIT ?', [limit]));
+    res.json(await queryAll('SELECT * FROM audit_log ORDER BY id DESC LIMIT ?', [limit]));
   });
 
   /* ── Settings ── */
-  app.get('/api/settings', (req, res) => {
-    const rows = queryAll('SELECT * FROM settings');
+  app.get('/api/settings', async (req, res) => {
+    const rows = await queryAll('SELECT * FROM settings');
     const settings = {};
     rows.forEach(r => { settings[r.key] = r.value; });
     res.json(settings);
   });
-  app.put('/api/settings', (req, res) => {
+  app.put('/api/settings', async (req, res) => {
     for (const [key, value] of Object.entries(req.body)) {
-      runSQL('INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)', [key, String(value), nowISO()]);
+      await runSQL('INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)', [key, String(value), nowISO()]);
     }
     logEvent('settings.updated', req.body);
     res.json({ ok: true });
@@ -655,7 +815,7 @@ function createApp() {
   // SPA fallback
   app.get('*', (req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'index.html')));
 
-  // Last-resort error handler
+  // Error handler
   app.use(errorHandler);
 
   return app;
@@ -663,22 +823,59 @@ function createApp() {
 
 /* ────────── Start server ────────── */
 async function startServer(port = 18090, { bind = '127.0.0.1', dataDir } = {}) {
-  // If dataDir is provided (e.g. from Electron's userData), use it for
-  // DB and reports so we don't write inside read-only ASAR archives.
   if (dataDir) {
     _dataDir = dataDir;
     REPORTS_DIR = path.join(_dataDir, 'generated_reports');
     REPORTS_DIR = ensureDir(REPORTS_DIR);
   }
+
+  // 1. Initialize database (PostgreSQL with TimescaleDB, or SQLite fallback)
   await initDB(dataDir || undefined);
+  log.info('server.db_ready', { mode: isPostgreSQL() ? 'postgresql' : 'sqlite' });
+
+  // 2. Initialize Kafka event bus
+  const kafkaResult = await eventBus.init();
+  log.info('server.kafka_ready', { mode: kafkaResult.mode });
+
+  // 3. Initialize credential encryption
+  try {
+    const secretRow = await queryOne("SELECT value FROM settings WHERE key='server_secret'");
+    const envSecret = process.env.AEGISOPS_SECRET;
+    const secret = envSecret || secretRow?.value;
+    if (secret) {
+      initEncryptionKey(secret);
+      await migrateCredentials(); // Migrate plaintext → encrypted
+    }
+  } catch (err) {
+    log.warn('server.crypto_init_failed', { error: err.message });
+  }
+
+  // 4. Load DMZ proxy configurations
+  await dmzManager.loadProxies();
+
+  // 5. Create Express app
   const app = createApp();
-  // Auto-start persisted MCP servers in background (do not block listen)
+
+  // 6. Auto-start persisted MCP servers
   autoStartMcp().catch(err => log.warn('mcp.autostart_error', { err: err.message }));
+
+  // 7. Start workflow cron scheduler
+  startScheduler();
+
+  // 8. Start data retention cleanup job
+  startRetentionJob();
 
   return new Promise((resolve, reject) => {
     const server = http.createServer(app);
     server.listen(port, bind, () => {
-      log.info('server.listening', { url: `http://${bind}:${port}`, bind, port });
+      log.info('server.listening', {
+        url: `http://${bind}:${port}`,
+        bind,
+        port,
+        version: '2.0.0',
+        database: isPostgreSQL() ? 'postgresql' : 'sqlite',
+        kafka: kafkaResult.mode,
+      });
       resolve(server);
     });
     server.on('error', reject);

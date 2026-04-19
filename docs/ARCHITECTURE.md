@@ -1,32 +1,71 @@
-# Архитектура AegisOps
+# Архитектура AegisOps v2.0
 
 ## Обзор
 
-AegisOps — трёхслойная гибридная система:
+AegisOps — трёхслойная гибридная система production-класса:
 
 1. **Backend (ПК)** — Node.js/Express (основной) + Python/FastAPI (legacy/reference).
 2. **Desktop UI** — Electron + vanilla JS SPA.
 3. **Mobile Client** — Flutter (Android), подключается к backend через интернет.
 
 ```
-        ┌────────────── ПК (Server) ─────────────────┐
-        │                                            │
-User ──▶│  Electron shell  ──▶  Express (server/)   │
-        │                         │                  │
-        │                         ├─▶ sql.js (local) │
-        │                         ├─▶ Connectors     │
-        │                         │    ├─ Ollama     │
-        │                         │    ├─ 1C OData   │
-        │                         │    ├─ SAP OData  │
-        │                         │    ├─ OPC UA     │
-        │                         │    └─ Telegram   │
-        │                         ├─▶ MCP Client     │
-        │                         │    (stdio ↔ OpenClaw)
-        │                         └─▶ Workflow Engine │
-        │                                             │
-        │       Cloudflare Tunnel / ngrok ◀──────────┘
-        │             (public HTTPS URL)              │
-        └──────────────────┬──────────────────────────┘
+        ┌────────────────── ПК (Server) ──────────────────────┐
+        │                                                      │
+User ──▶│  Electron shell  ──▶  Express (server/)              │
+        │                         │                            │
+        │                         ├─▶ PostgreSQL / TimescaleDB │
+        │                         │    (primary data store)     │
+        │                         │    ├─ Core tables           │
+        │                         │    └─ Telemetry hypertable  │
+        │                         │                             │
+        │                         ├─▶ Apache Kafka Event Bus    │
+        │                         │    (central event streaming)│
+        │                         │    ├─ Connector data        │
+        │                         │    ├─ ETL events            │
+        │                         │    ├─ Workflow events       │
+        │                         │    ├─ AI request/response   │
+        │                         │    ├─ SCADA telemetry       │
+        │                         │    └─ Audit stream          │
+        │                         │                             │
+        │                         ├─▶ Connectors                │
+        │                         │    ├─ Ollama               │
+        │                         │    ├─ 1C OData             │
+        │                         │    ├─ SAP OData            │
+        │                         │    ├─ OPC UA (via DMZ)     │
+        │                         │    ├─ MQTT/IoT             │
+        │                         │    └─ Telegram             │
+        │                         │                             │
+        │                         ├─▶ SCADA DMZ Proxy          │
+        │                         │    (ISA/IEC 62443)         │
+        │                         │    ├─ Read-only default    │
+        │                         │    ├─ Rate limiting         │
+        │                         │    ├─ Full audit trail     │
+        │                         │    └─ Emergency stop       │
+        │                         │                             │
+        │                         ├─▶ ETL Pipeline Engine      │
+        │                         │    ├─ Extract (connector)  │
+        │                         │    ├─ Clean (null/dup)     │
+        │                         │    ├─ Transform (map/cast) │
+        │                         │    ├─ Enrich (compute)     │
+        │                         │    ├─ Validate (rules)     │
+        │                         │    └─ Load (PG/Kafka/Ext) │
+        │                         │                             │
+        │                         ├─▶ DAG Workflow Engine      │
+        │                         │    ├─ Parallel fan-out     │
+        │                         │    ├─ Cron scheduler       │
+        │                         │    ├─ Retry + backoff      │
+        │                         │    ├─ Timeout enforcement  │
+        │                         │    └─ Sub-workflows        │
+        │                         │                             │
+        │                         ├─▶ MCP Client               │
+        │                         │    (stdio ↔ OpenClaw)       │
+        │                         │                             │
+        │                         └─▶ Credential Encryption    │
+        │                              (AES-256-GCM)           │
+        │                                                      │
+        │       Cloudflare Tunnel / ngrok ◀──────────────────┘ │
+        │             (public HTTPS URL)                        │
+        └──────────────────┬──────────────────────────────────┘
                            │
                            ▼
                  ┌──────────────────┐
@@ -38,105 +77,168 @@ User ──▶│  Electron shell  ──▶  Express (server/)   │
 
 ## Компоненты
 
-### `server/index.js` — Express app factory
-Собирает middleware-стек:
-1. `securityHeaders` — CSP, X-Frame-Options и др.
-2. `payloadGuard(10MB)` — предотвращает DoS больших тел.
-3. `express.json()` — парсинг.
-4. `inputSanitizer` — strip control chars + prototype pollution defense.
-5. `requestLogger` — JSON-line логи с ID запроса и latency.
-6. `rateLimiter(300/мин)` — per-IP, per-route.
-7. `authMiddleware` — на `/api/workflows`, `/api/mcp`, `/api/tunnel`.
+### `server/db/pg.js` — PostgreSQL + TimescaleDB
 
-### `server/auth.js` — Аутентификация
-Два механизма:
-- **JWT** (формат `v1.<b64(payload)>.<b64(hmac)>`), HMAC-SHA256 с серверным секретом. 24ч TTL. Используется для админ-логина.
-- **API Keys** (формат `aos_<base64url(24b)>`), хешируются SHA256+secret в БД. Используются для мобильных клиентов.
+**Primary database** — PostgreSQL 15+ с расширением TimescaleDB для time-series данных.
 
-**Бутстрап**: при первом запросе `POST /api/auth/bootstrap` с паролем админа. Сервер сам генерирует и хранит `server_secret` в `settings` таблице (48-байт crypto-random), если переменная окружения `AEGISOPS_SECRET` не задана.
+Особенности:
+- **Connection pooling**: pg.Pool (20 соединений)
+- **Автоматическая миграция**: при запуске создаются все таблицы, индексы, гипертаблицы
+- **TimescaleDB hypertable**: `telemetry_readings` с chunk_interval = 1 день, 6 партиций
+- **Continuous aggregates**: часовые и дневные агрегаты для быстрых дашборд-запросов
+- **Retention policy**: автоудаление raw telemetry старше 90 дней (агрегаты хранятся дольше)
+- **SQLite fallback**: если PostgreSQL недоступен, автоматически используется sql.js
 
-**Localhost bypass**: если запрос с `127.0.0.1`, auth не требуется (кроме сценариев с `AEGISOPS_ENFORCE_LOCAL_AUTH=1`). Это даёт «zero-config» UX для локальной работы.
+Новые таблицы:
+- `telemetry_readings` — TimescaleDB hypertable (time, connector_id, node_id, metric_name, value, quality, metadata)
+- `etl_run_log` — история ETL-выполнений (rows_extracted/transformed/loaded/rejected, errors, metrics)
+- `workflow_schedules` — cron-расписания для Airflow-подобной оркестрации
+- `dmz_proxies` — конфигурации SCADA DMZ прокси
 
-### `server/mcp/client.js` — Model Context Protocol
-Полная реализация MCP-клиента по спецификации 2025-06-18:
-- **Транспорт**: stdio (spawn дочернего процесса).
-- **Формат**: JSON-RPC 2.0, line-delimited.
-- **Методы**: `initialize`, `initialized` notification, `tools/list`, `tools/call`, `resources/list`, `resources/read`, `prompts/list`, `prompts/get`.
-- **Timeout**: 30 секунд на запрос.
-- **Reconnect**: при exit процесса — reject всех pending запросов.
+Конфигурация через env: `PG_HOST`, `PG_PORT`, `PG_DATABASE`, `PG_USER`, `PG_PASSWORD`, `PG_SSL`
 
-`openclaw-bridge.js` добавляет преднастроенные пресеты (`@modelcontextprotocol/server-filesystem`, `-github`, `-postgres` и т. д.) и регистрирует их в общем `McpRegistry`.
+### `server/events/kafka.js` — Apache Kafka Event Bus
 
-### `server/workflow/engine.js` — Workflow Engine
-Выполняет ациклический граф нод (DAG). Тип графа:
-```js
-{ nodes: [{ id, type, params, position }], edges: [{ from, to }] }
+**Центральная шина событий** для всех реалтайм-данных платформы.
+
+Топики:
+| Топик | Назначение |
+|-------|-----------|
+| `aegisops.connector.data` | Сырые данные коннекторов |
+| `aegisops.connector.status` | Изменения статуса коннекторов |
+| `aegisops.etl.extracted` | ETL: данные после извлечения |
+| `aegisops.etl.transformed` | ETL: данные после трансформации |
+| `aegisops.etl.loaded` | ETL: данные после загрузки |
+| `aegisops.workflow.event` | События выполнения workflows |
+| `aegisops.ai.request` | Запросы к AI |
+| `aegisops.ai.response` | Ответы AI |
+| `aegisops.alert` | Алерты и уведомления |
+| `aegisops.audit` | Аудит-события (для SIEM) |
+| `aegisops.scada.telemetry` | Time-series SCADA телеметрия |
+
+Особенности:
+- **kafkajs** — production-клиент для Apache Kafka
+- **Idempotent producer** — нет дубликатов при ретраях
+- **LZ4 compression** — сжатие сообщений
+- **Consumer groups** — параллельная обработка
+- **EventEmitter fallback** — работает без Kafka (degraded mode)
+
+Конфигурация: `KAFKA_BROKERS` (comma-separated), `KAFKA_CLIENT_ID`, `KAFKA_SASL_*`, `KAFKA_SSL`
+
+### `server/services/etl/engine.js` — Real ETL Pipeline Engine
+
+**6-фазный пайплайн**: Extract → Clean → Transform → Enrich → Validate → Load
+
+Фазы:
+1. **EXTRACT** — получение данных из source connector (OData, OPC UA, MQTT, DB)
+2. **CLEAN** — удаление null, пустых строк, trim whitespace
+3. **TRANSFORM** — маппинг полей, приведение типов, конвертация единиц (bar→MPa, °F→°C), нормализация
+4. **ENRICH** — вычисляемые поля, агрегация, дедупликация
+5. **VALIDATE** — проверка диапазонов, обязательные поля, бизнес-правила
+6. **LOAD** — загрузка в TimescaleDB, Kafka, или внешний коннектор
+
+12 встроенных трансформеров:
+- `clean`, `rename`, `castTypes`, `normalize`, `unitConvert`, `filter`, `compute`, `deduplicate`, `aggregate`
+- Валидаторы: `range`, `required`, `businessRule`
+
+Метрики выполнения: rows_extracted, rows_transformed, rows_loaded, rows_rejected, dead-letter queue
+
+Интеграция с Kafka: publishes на ETL_EXTRACTED, ETL_TRANSFORMED, ETL_LOADED топики
+
+### `server/security/dmz.js` — SCADA DMZ Security Proxy
+
+**ISA/IEC 62443** совместимая сетевая изоляция для OPC UA/SCADA соединений.
+
+Архитектура (Purdue Model):
+```
+Enterprise Network (Level 5)     ← AegisOps
+         │
+    DMZ (Level 3.5)              ← ScadaDmzProxy
+    - Read-only по умолчанию
+    - Rate limiting (token bucket)
+    - Полный audit trail
+    - Фильтрация команд
+    - Emergency stop
+         │
+Control Network (Level 2-3)      ← OPC UA SCADA Server
 ```
 
-**Алгоритм**:
-1. Вычисляем in-degree каждой ноды.
-2. Очередь = ноды с in-degree = 0.
-3. Извлекаем из очереди, выполняем `runNode()`, записываем результат.
-4. Для каждого исходящего ребра уменьшаем in-degree, если =0 — добавляем в очередь.
-5. Пропускаем ноды, у которых хоть один родитель был skipped или errored.
+Режимы доступа:
+| Режим | Разрешённые операции |
+|-------|---------------------|
+| `read_only` | read, browse, subscribe |
+| `monitor` | read, browse, subscribe |
+| `read_write` | read, browse, subscribe, write, call |
+| `admin` | все операции |
 
-**Node types**:
-- `trigger.manual`, `trigger.cron`
-- `connector.test`, `connector.fetch`
-- `ai.ask` (Ollama)
-- `mcp.call` (любой MCP tool)
-- `data.transform`, `data.filter` (JS expression в `new Function`, без доступа к глобальной области)
-- `output.webhook`, `output.telegram`, `output.report`
+Безопасность:
+- **Read-only по умолчанию** — если DMZ прокси не настроен, создаётся restrictive default
+- **Rate limiting** — token bucket, настраиваемый (по умолчанию 10 req/sec)
+- **Node ID валидация** — защита от injection через malformed node IDs
+- **Write value constraints** — проверка диапазонов, safety threshold (1e9)
+- **Emergency stop** — мгновенная блокировка всего SCADA доступа
+- **Полный аудит** — каждое авторизованное и заблокированное действие логируется
 
-Интерполяция шаблонов: `{{$input.foo}}` → вычисляется как JS-выражение в изолированной функции.
+### `server/workflow/scheduler.js` — Enhanced DAG Workflow Engine
 
-### `server/tunnel.js` — Удалённый доступ
-Поддерживает 3 провайдера:
-- **cloudflared** (рекомендуется, без аккаунта) — парсит stdout на регэксп `*.trycloudflare.com`.
-- **ngrok** (если `NGROK_AUTHTOKEN` установлен).
-- **manual** — пользователь вводит URL сам.
+**Airflow-подобная оркестрация** с параллельным выполнением DAG.
 
-Публичный URL сохраняется в `settings.public_base_url` — используется для QR-кода сопряжения.
+Новые возможности:
+1. **Parallel fan-out**: независимые ветки выполняются concurrently (Promise.all)
+2. **Cron scheduler**: node-cron автоматически запускает workflows по расписанию
+3. **Retry logic**: настраиваемые retry с exponential backoff
+4. **Timeout enforcement**: kill долгих нод
+5. **Sub-workflow nodes**: вызов других workflows как нод
+6. **Loop/iteration**: for-each обработка массивов
+7. **DMZ-aware SCADA**: OPC UA операции проходят через DMZ прокси
+8. **Kafka events**: workflow events публикуются в event bus
 
-### Frontend: Node-based Canvas (`public/js/planning/canvas.js`)
-Vanilla-JS реализация (без React):
-- **SVG-слой** — Безье-кривые между нодами (curved wires).
-- **DIV-слой** — ноды с портами (left=input, right=output).
-- **Transform** — единый `transform: translate() scale()` на родительском контейнере для pan/zoom.
-- **Drag & drop** — mousedown на ноде → mousemove перетаскивает; mousedown на порту → rubber-band линия → mouseup на другом порту = edge.
-- **Import/Export** — JSON-совместимый с API `/api/workflows`.
+Типы нод:
+- Триггеры: `trigger.manual`, `trigger.cron`
+- Коннекторы: `connector.test`, `connector.fetch`, `connector.write` (DMZ-protected)
+- ИИ: `ai.ask`
+- MCP: `mcp.call`
+- Данные: `data.transform`, `data.filter`, `data.foreach`
+- Вывод: `output.telegram`, `output.webhook`, `output.report`
+- Оркестрация: `subworkflow`
 
-### Android App (`android_app/`)
-- **State**: Riverpod (минимально) + SharedPreferences/FlutterSecureStorage.
-- **Routing**: go_router с ShellRoute (нижняя навигация).
-- **API**: `http` package + retry + timeout.
-- **QR-сканер**: `mobile_scanner` (ML Kit).
-- **Pairing flow**:
-  1. Пользователь сканирует QR — содержит `{ "base": "https://...", "code": "123456" }`.
-  2. APK вызывает `POST /api/auth/pair/consume` с кодом.
-  3. Сервер возвращает одноразовый API-key и URL.
-  4. APK сохраняет в Android KeyStore через `flutter_secure_storage`.
+### `server/security/crypto.js` — Credential Encryption
+
+**AES-256-GCM** шифрование учётных данных коннекторов.
+
+- Ключ: HKDF-SHA256 от serverSecret, 256-bit
+- IV: 12-byte random per encryption
+- Формат: base64(iv:ciphertext:authTag)
+- Автоматическая миграция plaintext → encrypted при запуске
+
+### `server/services/retention.js` — Data Retention Service
+
+**Автоматическая очистка** старых данных по расписанию (ежедневно в 03:00).
+
+- Очищает audit_log, workflow_runs, telemetry_readings старше N дней
+- N настраивается через `settings.data_retention_days` (по умолчанию 365)
 
 ## Данные
 
-SQLite (через `sql.js` WASM для JS backend, через `sqlite3` для Python legacy). Таблицы:
-- `connectors`, `scenarios`, `documents`, `audit_log`
-- `modules`, `training_jobs`, `etl_pipelines`, `settings`
-- **Новые**: `workflows`, `workflow_runs`, `api_keys`, `mcp_servers`
+PostgreSQL/TimescaleDB (primary) или SQLite (fallback):
+
+Core tables: `connectors`, `scenarios`, `documents`, `audit_log`, `modules`, `training_jobs`, `etl_pipelines`, `settings`, `workflows`, `workflow_runs`, `api_keys`, `mcp_servers`
+
+New v2.0 tables: `telemetry_readings` (hypertable), `etl_run_log`, `workflow_schedules`, `dmz_proxies`
 
 ## CI/CD
 
 GitHub Actions публикует:
-- **Windows installer (NSIS)** + portable — `AegisOps-LocalAI-{ver}-x64.exe`
+- **Windows installer (NSIS)** + portable
 - **Linux AppImage** + .deb
 - **macOS dmg**
-- **Android APK** — universal + per-ABI (arm64, armv7, x86_64)
-
-При push тега `v*` все артефакты автоматически прикрепляются к GitHub Release.
+- **Android APK**
 
 ## Производительность
 
-- sql.js хранит всю БД в памяти (~2 МБ для seeded данных), flush на диск после каждой записи.
-- Workflow Engine сериализует выполнение нод (нет parallel fan-out пока).
-- MCP-клиент использует persistent stdin/stdout — меньше оверхеда, чем HTTP-MCP.
-- Rate limit: 300 req/мин per-IP, достаточно для 2-3 активных мобильных клиентов.
+- PostgreSQL connection pool (20 соединений) для high-concurrency
+- TimescaleDB hypertable с 6 партициями для телеметрии (миллионы записей)
+- Kafka LZ4 compression для event streaming
+- Parallel DAG execution (Promise.all для fan-out)
+- Rate limiting: 300 req/мин per-IP
+- ETL pipeline: row-level processing с dead-letter queue
