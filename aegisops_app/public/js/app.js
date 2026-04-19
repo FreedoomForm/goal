@@ -947,6 +947,11 @@ async function renderDocuments(container) {
 async function renderTraining(container) {
   const jobs = await api('/api/training');
 
+  const statusBadge = (s) => {
+    const map = { completed: 'badge-success', running: 'badge-warning', cancelled: 'badge-danger', failed: 'badge-danger', pending: 'badge-neutral' };
+    return map[s] || 'badge-neutral';
+  };
+
   container.innerHTML = `
     <div class="page-header">
       <div>
@@ -955,6 +960,42 @@ async function renderTraining(container) {
       </div>
       <button class="btn btn-primary" id="btnNewTraining">+ Новая задача обучения</button>
     </div>
+
+    ${jobs.length > 0 ? `
+      <div class="card mb-24">
+        <div class="card-title mb-16">Задачи обучения</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>ID</th><th>Название</th><th>Модель</th><th>Метод</th><th>Статус</th><th>Прогресс</th><th>Дата</th><th>Действия</th></tr></thead>
+            <tbody>
+              ${jobs.map(j => `
+                <tr>
+                  <td>#${j.id}</td>
+                  <td>${escapeHtml(j.name)}</td>
+                  <td><span class="chip">${escapeHtml(j.base_model)}</span></td>
+                  <td><span class="chip">${escapeHtml(j.method)}</span></td>
+                  <td><span class="badge ${statusBadge(j.status)}">${j.status}</span></td>
+                  <td style="min-width:140px">
+                    <div style="display:flex;align-items:center;gap:8px">
+                      <div class="progress-bar" style="width:80px"><div class="progress-fill" style="width:${j.progress || 0}%"></div></div>
+                      <span class="text-sm text-muted">${j.progress || 0}%</span>
+                    </div>
+                  </td>
+                  <td class="text-muted text-sm">${formatDate(j.created_at)}</td>
+                  <td>
+                    <div class="btn-group">
+                      ${j.status === 'pending' ? `<button class="btn btn-sm btn-primary start-training" data-id="${j.id}">▶ Запустить</button>` : ''}
+                      ${j.status === 'running' ? `<button class="btn btn-sm cancel-training" data-id="${j.id}" style="color:var(--danger)">⏹ Отменить</button>` : ''}
+                      ${j.status !== 'running' ? `<button class="btn btn-sm btn-danger del-training" data-id="${j.id}">✕ Удалить</button>` : ''}
+                    </div>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    ` : ''}
 
     <div class="grid-auto mb-24">
       <div class="card">
@@ -994,38 +1035,22 @@ async function renderTraining(container) {
         </div>
       </div>
     </div>
-
-    ${jobs.length > 0 ? `
-      <div class="card">
-        <div class="card-title mb-16">Задачи обучения</div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>ID</th><th>Название</th><th>Модель</th><th>Метод</th><th>Статус</th><th>Прогресс</th><th>Дата</th><th>Действия</th></tr></thead>
-            <tbody>
-              ${jobs.map(j => `
-                <tr>
-                  <td>#${j.id}</td>
-                  <td>${escapeHtml(j.name)}</td>
-                  <td><span class="chip">${j.base_model}</span></td>
-                  <td><span class="chip">${j.method}</span></td>
-                  <td><span class="badge ${j.status === 'completed' ? 'badge-success' : j.status === 'running' ? 'badge-warning' : j.status === 'cancelled' ? 'badge-danger' : 'badge-neutral'}">${j.status}</span></td>
-                  <td>
-                    <div class="progress-bar" style="width:100px"><div class="progress-fill" style="width:${j.progress}%"></div></div>
-                    <span class="text-sm text-muted">${j.progress}%</span>
-                  </td>
-                  <td class="text-muted">${formatDate(j.created_at)}</td>
-                  <td>
-                    ${j.status === 'pending' ? `<button class="btn btn-sm btn-primary start-training" data-id="${j.id}">▶ Запустить</button>` : ''}
-                    ${j.status === 'running' ? `<button class="btn btn-sm btn-danger cancel-training" data-id="${j.id}">⏹ Отменить</button>` : ''}
-                  </td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    ` : ''}
   `;
+
+  // Auto-refresh every 5 seconds while any job is running
+  if (jobs.some(j => j.status === 'running')) {
+    const pollId = setInterval(async () => {
+      try {
+        const freshJobs = await api('/api/training');
+        if (!freshJobs.some(j => j.status === 'running')) {
+          clearInterval(pollId);
+        }
+        await renderTraining(container);
+      } catch { clearInterval(pollId); }
+    }, 5000);
+    // Store pollId so we can clear on navigation
+    container.dataset.pollId = pollId;
+  }
 
   $('btnNewTraining')?.addEventListener('click', () => {
     showModal('Новая задача обучения', `
@@ -1081,23 +1106,16 @@ async function renderTraining(container) {
   // Start training job buttons
   $$('.start-training').forEach(btn => {
     btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      btn.textContent = '⏳ Запуск...';
       try {
         await api(`/api/training/${btn.dataset.id}/start`, { method: 'POST' });
         showToast('Обучение запущено', 'success');
         await renderTraining(container);
-        // Auto-refresh progress
-        const pollId = setInterval(async () => {
-          try {
-            const jobs = await api('/api/training');
-            const job = jobs.find(j => j.id == btn.dataset.id);
-            if (!job || job.status !== 'running') {
-              clearInterval(pollId);
-              await renderTraining(container);
-            }
-          } catch { clearInterval(pollId); }
-        }, 5000);
       } catch (err) {
         showToast('Ошибка: ' + err.message, 'error');
+        btn.disabled = false;
+        btn.textContent = '▶ Запустить';
       }
     });
   });
@@ -1115,9 +1133,36 @@ async function renderTraining(container) {
       }
     });
   });
+
+  // Delete training job buttons
+  $$('.del-training').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Удалить задачу обучения?')) return;
+      try {
+        await api(`/api/training/${btn.dataset.id}`, { method: 'DELETE' });
+        showToast('Задача обучения удалена', 'info');
+        await renderTraining(container);
+      } catch (err) {
+        showToast('Ошибка: ' + err.message, 'error');
+      }
+    });
+  });
 }
 async function renderETL(container) {
-  const pipelines = await api('/api/etl');
+  const [pipelines, connectors] = await Promise.all([
+    api('/api/etl'),
+    api('/api/connectors'),
+  ]);
+
+  const statusBadge = (s) => {
+    const map = { completed: 'badge-success', running: 'badge-warning', error: 'badge-danger', idle: 'badge-neutral' };
+    return map[s] || 'badge-neutral';
+  };
+
+  const getConnectorName = (id) => {
+    const c = connectors.find(c => c.id == id);
+    return c ? c.name : (id || '—');
+  };
 
   container.innerHTML = `
     <div class="page-header">
@@ -1125,8 +1170,37 @@ async function renderETL(container) {
         <h2 class="page-title">ETL Пайплайны</h2>
         <p class="page-subtitle">Настройка выгрузки данных из ERP/1C/SCADA/биллинг, очистка, разметка и обогащение</p>
       </div>
-      <button class="btn btn-primary" id="btnNewETL">+ Новый пайплайн</button>
+      <button class="btn btn-primary" id="btnNewETL">+ Создать пайплайн</button>
     </div>
+
+    ${pipelines.length > 0 ? `
+      <div class="card mb-24">
+        <div class="card-title mb-16">Пайплайны</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>ID</th><th>Название</th><th>Источник</th><th>Цель</th><th>Расписание</th><th>Статус</th><th>Действия</th></tr></thead>
+            <tbody>
+              ${pipelines.map(p => `
+                <tr>
+                  <td class="text-muted">#${p.id}</td>
+                  <td><strong>${escapeHtml(p.name)}</strong></td>
+                  <td><span class="chip">${typeIcons[connectors.find(c => c.id == p.source_connector_id)?.type] || '🔌'} ${escapeHtml(getConnectorName(p.source_connector_id))}</span></td>
+                  <td><span class="chip font-mono">${escapeHtml(p.target || 'local_db')}</span></td>
+                  <td><span class="chip">⏰ ${escapeHtml(p.schedule || 'manual')}</span></td>
+                  <td><span class="badge ${statusBadge(p.status)}">${p.status || 'idle'}</span></td>
+                  <td>
+                    <div class="btn-group">
+                      ${p.status !== 'running' ? `<button class="btn btn-sm btn-primary run-etl" data-id="${p.id}">▶ Запустить</button>` : `<span class="badge badge-warning">⏳ Выполняется</span>`}
+                      <button class="btn btn-sm btn-danger del-etl" data-id="${p.id}">✕ Удалить</button>
+                    </div>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    ` : ''}
 
     <div class="grid-auto mb-24">
       <div class="card">
@@ -1151,26 +1225,20 @@ async function renderETL(container) {
       </div>
 
       <div class="card">
-        <div class="card-title">Активные пайплайны</div>
-        <div class="card-subtitle mb-16">Настроенные процессы обработки данных</div>
-        ${pipelines.length === 0 ? `
-          <p class="text-muted">Пайплайны ещё не созданы. Нажмите «+ Новый пайплайн».</p>
+        <div class="card-title">Доступные коннекторы-источники</div>
+        <div class="card-subtitle mb-16">Коннекторы для использования в пайплайнах</div>
+        ${connectors.length === 0 ? `
+          <p class="text-muted">Нет коннекторов. Сначала добавьте коннектор.</p>
         ` : `
           <div class="item-list">
-            ${pipelines.map(p => `
+            ${connectors.map(c => `
               <div class="item-row">
+                <div class="connector-type-icon ${c.type}" style="width:32px;height:32px;font-size:16px">${typeIcons[c.type] || '🔌'}</div>
                 <div class="item-info">
-                  <div class="item-name">${escapeHtml(p.name)}</div>
-                  <div class="item-meta">
-                    <span class="badge ${p.status === 'completed' ? 'badge-success' : p.status === 'running' ? 'badge-warning' : p.status === 'error' ? 'badge-danger' : 'badge-neutral'}">${p.status}</span>
-                    <span>${p.schedule || 'manual'}</span>
-                    <span>→ ${p.target}</span>
-                  </div>
+                  <div class="item-name">${escapeHtml(c.name)}</div>
+                  <div class="item-meta"><span>${typeNames[c.type] || c.type}</span></div>
                 </div>
-                <div class="item-actions">
-                  ${p.status !== 'running' ? `<button class="btn btn-sm btn-primary run-etl" data-id="${p.id}">▶ Запустить</button>` : ''}
-                  <button class="btn btn-sm btn-danger del-etl" data-id="${p.id}">✕</button>
-                </div>
+                <span class="badge ${c.enabled ? 'badge-success' : 'badge-neutral'}">${c.enabled ? 'вкл' : 'выкл'}</span>
               </div>
             `).join('')}
           </div>
@@ -1180,18 +1248,25 @@ async function renderETL(container) {
   `;
 
   $('btnNewETL')?.addEventListener('click', () => {
-    showModal('Новый ETL пайплайн', `
+    showModal('Создать ETL пайплайн', `
       <div class="form-group">
         <label class="form-label">Название</label>
         <input class="form-input" id="etlName" placeholder="Например: 1C → Газовый баланс">
       </div>
       <div class="form-group">
-        <label class="form-label">Расписание (cron)</label>
-        <input class="form-input" id="etlSchedule" placeholder="0 4 * * * (каждый день в 4:00)">
+        <label class="form-label">Коннектор-источник</label>
+        <select class="form-select" id="etlSourceConnector">
+          <option value="">— Выберите коннектор —</option>
+          ${connectors.map(c => `<option value="${c.id}">${typeIcons[c.type] || '🔌'} ${escapeHtml(c.name)} (${typeNames[c.type] || c.type})</option>`).join('')}
+        </select>
       </div>
       <div class="form-group">
         <label class="form-label">Target</label>
         <input class="form-input" id="etlTarget" value="local_db">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Расписание (cron)</label>
+        <input class="form-input" id="etlSchedule" placeholder="0 4 * * * (каждый день в 4:00)">
       </div>
     `, `
       <button class="btn" onclick="hideModal()">Отмена</button>
@@ -1203,8 +1278,9 @@ async function renderETL(container) {
           method: 'POST',
           body: JSON.stringify({
             name: $('etlName').value,
-            schedule: $('etlSchedule').value,
+            source_connector_id: $('etlSourceConnector').value ? parseInt($('etlSourceConnector').value) : null,
             target: $('etlTarget').value,
+            schedule: $('etlSchedule').value,
           }),
         });
         hideModal();
@@ -1224,7 +1300,7 @@ async function renderETL(container) {
       try {
         await api(`/api/etl/${btn.dataset.id}/run`, { method: 'POST' });
         showToast('ETL пайплайн запущен', 'success');
-        setTimeout(() => renderETL(container), 3000); // refresh after 3s
+        await renderETL(container);
       } catch (err) {
         showToast('Ошибка: ' + err.message, 'error');
         btn.disabled = false;
@@ -1249,8 +1325,28 @@ async function renderETL(container) {
 }
 
 /* ══════════════ AUDIT PAGE ══════════════ */
-async function renderAudit(container) {
-  const logs = await api('/api/audit?limit=100');
+async function renderAudit(container, currentLimit = 100, currentFilter = '') {
+  const logs = await api(`/api/audit?limit=${currentLimit}`);
+
+  // Apply client-side filter by event_type if provided
+  const filtered = currentFilter
+    ? logs.filter(l => l.event_type && l.event_type.toLowerCase().includes(currentFilter.toLowerCase()))
+    : logs;
+
+  const formatPayload = (payload) => {
+    let parsed;
+    try { parsed = JSON.parse(payload); } catch { parsed = payload; }
+    if (typeof parsed === 'object' && parsed !== null) {
+      const entries = Object.entries(parsed);
+      if (entries.length === 0) return '—';
+      return entries.map(([k, v]) => {
+        const val = typeof v === 'object' ? JSON.stringify(v) : String(v);
+        return `<span class="chip" style="margin:2px">${escapeHtml(k)}=${escapeHtml(val.length > 60 ? val.slice(0, 60) + '…' : val)}</span>`;
+      }).join('');
+    }
+    const str = String(parsed);
+    return escapeHtml(str.length > 120 ? str.slice(0, 120) + '…' : str);
+  };
 
   container.innerHTML = `
     <div class="page-header">
@@ -1258,44 +1354,82 @@ async function renderAudit(container) {
         <h2 class="page-title">Журнал аудита</h2>
         <p class="page-subtitle">Полная история всех действий системы: создание, изменение, выполнение, ошибки</p>
       </div>
-      <button class="btn" onclick="renderPage('audit')">🔄 Обновить</button>
+      <div class="item-actions">
+        <select class="form-select" id="auditLimit" style="width:auto">
+          <option value="25" ${currentLimit === 25 ? 'selected' : ''}>25 записей</option>
+          <option value="50" ${currentLimit === 50 ? 'selected' : ''}>50 записей</option>
+          <option value="100" ${currentLimit === 100 ? 'selected' : ''}>100 записей</option>
+          <option value="200" ${currentLimit === 200 ? 'selected' : ''}>200 записей</option>
+        </select>
+        <button class="btn" id="btnRefreshAudit">🔄 Обновить</button>
+      </div>
     </div>
 
-    <div class="table-wrap card">
-      <table>
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Событие</th>
-            <th>Детали</th>
-            <th>Время</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${logs.map(l => {
-            let payload;
-            try { payload = JSON.parse(l.payload); } catch { payload = l.payload; }
-            const payloadStr = typeof payload === 'object' ? JSON.stringify(payload, null, 0) : String(payload);
-            return `
+    <div class="card mb-24">
+      <div class="form-group" style="margin-bottom:0">
+        <label class="form-label">Фильтр по типу события</label>
+        <input class="form-input" id="auditFilter" placeholder="Введите тип события для поиска..." value="${escapeHtml(currentFilter)}">
+      </div>
+    </div>
+
+    ${filtered.length === 0 ? `
+      <div class="card">
+        <p class="text-muted">Нет записей аудита${currentFilter ? ' с фильтром "' + escapeHtml(currentFilter) + '"' : ''}.</p>
+      </div>
+    ` : `
+      <div class="table-wrap card">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Тип события</th>
+              <th>Payload</th>
+              <th>Дата</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filtered.map(l => `
               <tr>
                 <td class="text-muted">#${l.id}</td>
                 <td>
-                  <span class="badge ${l.event_type.includes('error') ? 'badge-danger' : l.event_type.includes('created') ? 'badge-success' : l.event_type.includes('executed') ? 'badge-info' : 'badge-neutral'}">${escapeHtml(l.event_type)}</span>
+                  <span class="badge ${l.event_type.includes('error') ? 'badge-danger' : l.event_type.includes('created') ? 'badge-success' : l.event_type.includes('executed') || l.event_type.includes('run') ? 'badge-info' : l.event_type.includes('deleted') ? 'badge-danger' : 'badge-neutral'}">${escapeHtml(l.event_type)}</span>
                 </td>
-                <td class="text-sm text-muted font-mono truncate" style="max-width:400px" title="${escapeHtml(payloadStr)}">${escapeHtml(payloadStr.slice(0, 120))}</td>
-                <td class="text-muted text-sm">${formatDate(l.created_at)}</td>
+                <td style="max-width:500px">${formatPayload(l.payload)}</td>
+                <td class="text-muted text-sm" style="white-space:nowrap">${formatDate(l.created_at)}</td>
               </tr>
-            `;
-          }).join('')}
-        </tbody>
-      </table>
-    </div>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `}
   `;
+
+  // Limit selector
+  $('auditLimit')?.addEventListener('change', (e) => {
+    renderAudit(container, parseInt(e.target.value), currentFilter);
+  });
+
+  // Refresh button
+  $('btnRefreshAudit')?.addEventListener('click', () => {
+    renderAudit(container, currentLimit, currentFilter);
+  });
+
+  // Filter input with debounce
+  let filterTimeout;
+  $('auditFilter')?.addEventListener('input', (e) => {
+    clearTimeout(filterTimeout);
+    filterTimeout = setTimeout(() => {
+      renderAudit(container, currentLimit, e.target.value);
+    }, 400);
+  });
 }
 
 /* ══════════════ SETTINGS PAGE ══════════════ */
 async function renderSettings(container) {
   const settings = await api('/api/settings');
+
+  // Store original values for change detection
+  const original = { ...settings };
 
   container.innerHTML = `
     <div class="page-header">
@@ -1303,52 +1437,69 @@ async function renderSettings(container) {
         <h2 class="page-title">Настройки</h2>
         <p class="page-subtitle">Конфигурация платформы AegisOps Local AI</p>
       </div>
+      <button class="btn btn-primary" id="btnSaveAllSettings">💾 Сохранить все</button>
     </div>
 
     <div class="grid-2">
       <div class="card">
-        <div class="card-title mb-16">🤖 Ollama / LLM</div>
+        <div class="card-title mb-16">⚙️ Общие</div>
         <div class="form-group">
-          <label class="form-label">URL Ollama</label>
-          <input class="form-input" id="setOllamaUrl" value="${escapeHtml(settings.ollama_url || 'http://127.0.0.1:11434')}">
+          <label class="form-label">Тема оформления</label>
+          <select class="form-select setting-field" id="setTheme" data-key="theme">
+            <option value="dark" ${(settings.theme || 'dark') === 'dark' ? 'selected' : ''}>Тёмная</option>
+            <option value="light" ${settings.theme === 'light' ? 'selected' : ''}>Светлая</option>
+          </select>
         </div>
         <div class="form-group">
-          <label class="form-label">Модель по умолчанию</label>
-          <input class="form-input" id="setOllamaModel" value="${escapeHtml(settings.ollama_model || 'qwen2.5:7b-instruct')}">
+          <label class="form-label">Язык интерфейса</label>
+          <select class="form-select setting-field" id="setLanguage" data-key="language">
+            <option value="ru" ${(settings.language || 'ru') === 'ru' ? 'selected' : ''}>Русский</option>
+            <option value="en" ${settings.language === 'en' ? 'selected' : ''}>English</option>
+            <option value="uz" ${settings.language === 'uz' ? 'selected' : ''}>O'zbek</option>
+          </select>
         </div>
-        <button class="btn btn-primary btn-sm" id="btnSaveOllama">Сохранить</button>
       </div>
 
       <div class="card">
-        <div class="card-title mb-16">✈️ Telegram</div>
+        <div class="card-title mb-16">🤖 AI / Ollama</div>
         <div class="form-group">
-          <label class="form-label">Включен</label>
-          <select class="form-select" id="setTelegramEnabled">
-            <option value="false" ${settings.telegram_enabled !== 'true' ? 'selected' : ''}>Нет</option>
-            <option value="true" ${settings.telegram_enabled === 'true' ? 'selected' : ''}>Да</option>
+          <label class="form-label">URL Ollama</label>
+          <input class="form-input setting-field" id="setOllamaUrl" data-key="ollama_url" value="${escapeHtml(settings.ollama_url || 'http://127.0.0.1:11434')}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Модель по умолчанию</label>
+          <input class="form-input setting-field" id="setOllamaModel" data-key="ollama_model" value="${escapeHtml(settings.ollama_model || 'qwen2.5:7b-instruct')}">
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title mb-16">🔔 Уведомления</div>
+        <div class="form-group">
+          <label class="form-label">Telegram уведомления</label>
+          <select class="form-select setting-field" id="setTelegramEnabled" data-key="telegram_enabled">
+            <option value="false" ${settings.telegram_enabled !== 'true' ? 'selected' : ''}>Отключены</option>
+            <option value="true" ${settings.telegram_enabled === 'true' ? 'selected' : ''}>Включены</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Автогенерация отчетов</label>
+          <select class="form-select setting-field" id="setAutoReports" data-key="auto_reports">
+            <option value="true" ${settings.auto_reports !== 'false' ? 'selected' : ''}>Да</option>
+            <option value="false" ${settings.auto_reports === 'false' ? 'selected' : ''}>Нет</option>
           </select>
         </div>
         <p class="text-sm text-muted mt-8">Для настройки Telegram Bot откройте раздел Коннекторы и задайте token и chat_id.</p>
-        <button class="btn btn-primary btn-sm mt-16" id="btnSaveTelegram">Сохранить</button>
       </div>
 
       <div class="card">
         <div class="card-title mb-16">📊 Данные</div>
         <div class="form-group">
           <label class="form-label">Хранить данные (дней)</label>
-          <input class="form-input" id="setRetention" type="number" value="${settings.data_retention_days || 365}">
+          <input class="form-input setting-field" id="setRetention" data-key="data_retention_days" type="number" value="${settings.data_retention_days || 365}">
         </div>
-        <div class="form-group">
-          <label class="form-label">Автогенерация отчетов</label>
-          <select class="form-select" id="setAutoReports">
-            <option value="true" ${settings.auto_reports !== 'false' ? 'selected' : ''}>Да</option>
-            <option value="false" ${settings.auto_reports === 'false' ? 'selected' : ''}>Нет</option>
-          </select>
-        </div>
-        <button class="btn btn-primary btn-sm" id="btnSaveData">Сохранить</button>
       </div>
 
-      <div class="card">
+      <div class="card" style="grid-column: 1 / -1">
         <div class="card-title mb-16">ℹ️ О системе</div>
         <div class="item-list">
           <div class="item-row" style="padding:10px 14px">
@@ -1376,24 +1527,86 @@ async function renderSettings(container) {
     </div>
   `;
 
-  $('btnSaveOllama')?.addEventListener('click', async () => {
-    await api('/api/settings', { method: 'PUT', body: JSON.stringify({ ollama_url: $('setOllamaUrl').value, ollama_model: $('setOllamaModel').value }) });
-    showToast('Настройки Ollama сохранены', 'success');
-  });
+  // Unified Save button — collects all changed values and sends a single PUT
+  $('btnSaveAllSettings')?.addEventListener('click', async () => {
+    const btn = $('btnSaveAllSettings');
+    btn.disabled = true;
+    btn.textContent = '⏳ Сохранение...';
 
-  $('btnSaveTelegram')?.addEventListener('click', async () => {
-    await api('/api/settings', { method: 'PUT', body: JSON.stringify({ telegram_enabled: $('setTelegramEnabled').value }) });
-    showToast('Настройки Telegram сохранены', 'success');
-  });
+    const changes = {};
+    $$('.setting-field').forEach(el => {
+      const key = el.dataset.key;
+      const currentVal = el.value;
+      if (key && currentVal !== undefined) {
+        changes[key] = currentVal;
+      }
+    });
 
-  $('btnSaveData')?.addEventListener('click', async () => {
-    await api('/api/settings', { method: 'PUT', body: JSON.stringify({ data_retention_days: $('setRetention').value, auto_reports: $('setAutoReports').value }) });
-    showToast('Настройки данных сохранены', 'success');
+    try {
+      await api('/api/settings', {
+        method: 'PUT',
+        body: JSON.stringify(changes),
+      });
+      showToast('Настройки сохранены', 'success');
+      await renderSettings(container);
+    } catch (err) {
+      showToast('Ошибка сохранения: ' + err.message, 'error');
+      btn.disabled = false;
+      btn.textContent = '💾 Сохранить все';
+    }
   });
 }
 
 /* ══════════════ INIT ══════════════ */
+/* ══════════════ Splash Screen — Auto-download Ollama & OpenClaw ══════════════ */
+async function runSplashSequence() {
+  const splash = $('splashScreen');
+  const steps = $('splashSteps');
+  const bar = $('splashProgressBar');
+  if (!splash || !steps || !bar) { hideSplash(); return; }
+
+  const splashSteps = [
+    { icon: '⏳', text: 'Подключение к серверу...', action: async () => { await api('/api/health').catch(() => {}); } },
+    { icon: '🤖', text: 'Проверка Ollama...', action: async () => { try { await api('/api/ai/ollama/status'); } catch {} } },
+    { icon: '📥', text: 'Загрузка Ollama (при необходимости)...', action: async () => { try { await api('/api/ai/ensure', { method: 'POST', body: '{}' }); } catch {} } },
+    { icon: '🧩', text: 'Проверка OpenClaw...', action: async () => { try { await api('/api/ai/openclaw/status'); } catch {} } },
+    { icon: '🔗', text: 'Подключение OpenClaw к Ollama...', action: async () => { try { await api('/api/ai/openclaw/configure', { method: 'POST', body: '{}' }); } catch {} } },
+    { icon: '✅', text: 'Готово!', action: async () => { await new Promise(r => setTimeout(r, 500)); } },
+  ];
+
+  steps.innerHTML = splashSteps.map((s, i) =>
+    `<div class="splash-step" data-step="${i}"><span class="splash-step-icon">${s.icon}</span><span>${s.text}</span></div>`
+  ).join('');
+
+  for (let i = 0; i < splashSteps.length; i++) {
+    const stepEl = steps.querySelector(`[data-step="${i}"]`);
+    if (stepEl) { stepEl.classList.add('active'); stepEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+    bar.style.width = `${((i + 0.5) / splashSteps.length) * 100}%`;
+
+    try { await splashSteps[i].action(); } catch {}
+
+    bar.style.width = `${((i + 1) / splashSteps.length) * 100}%`;
+    if (stepEl) { stepEl.classList.remove('active'); stepEl.classList.add('done'); }
+  }
+
+  // Auto-hide after a short delay
+  setTimeout(hideSplash, 800);
+}
+
+function hideSplash() {
+  const splash = $('splashScreen');
+  if (!splash) return;
+  splash.classList.add('hiding');
+  setTimeout(() => splash.classList.add('hidden'), 400);
+}
+
 window.addEventListener('DOMContentLoaded', () => {
+  // Start splash screen (auto-download Ollama & OpenClaw in background)
+  runSplashSequence();
+
+  // Skip button
+  $('splashSkip')?.addEventListener('click', hideSplash);
+
   // Navigation
   $$('.nav-item').forEach(item => {
     item.addEventListener('click', (e) => {
