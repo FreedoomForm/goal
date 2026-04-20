@@ -197,7 +197,7 @@ function generateHTMLReport(scenario, aiResult, collectedData) {
 }
 
 /* ────────── Express App ────────── */
-function createApp() {
+async function createApp() {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', true);
@@ -1295,7 +1295,7 @@ async function startServer(port = 18090, { bind = '0.0.0.0', dataDir } = {}) {
   await dmzManager.loadProxies();
 
   // 5. Create Express app
-  const app = createApp();
+  const app = await createApp();
 
   // 6. Auto-start persisted MCP servers
   autoStartMcp().catch(err => log.warn('mcp.autostart_error', { err: err.message }));
