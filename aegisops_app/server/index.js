@@ -104,34 +104,15 @@ async function askAI(prompt) {
     }
   }
 
-  // Try Ollama Cloud (official ollama.com)
+  // Try Ollama Cloud (official ollama.com — uses OLLAMA_API_KEY)
   try {
-    const apiKey = await ollamaManager.loadOllamaCloudKey();
-    if (apiKey) {
-      const res = await fetch('https://ollama.com/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model: ollamaManager.getActiveModel() || 'gpt-oss:120b-cloud',
-          stream: false,
-          messages: [systemMsg, userMsg],
-        }),
-        signal: AbortSignal.timeout(30000),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        return {
-          provider: 'ollama-cloud',
-          model: data.model || 'gpt-oss:120b-cloud',
-          content: data.message?.content || '',
-          totalDuration: data.total_duration,
-          evalCount: data.eval_count,
-        };
-      }
-    }
+    const result = await ollamaManager.chatWithOllamaCloud([systemMsg, userMsg], {
+      model: ollamaManager.getActiveModel(),
+    });
+    return result;
   } catch {}
 
-  // Try cloud Ollama endpoints
+  // Try cloud Ollama endpoints (remote servers like RunPod, Vast.ai)
   try {
     const cloudEndpoints = await ollamaManager.loadCloudEndpoints();
     for (const endpoint of cloudEndpoints) {
@@ -782,10 +763,18 @@ function createApp() {
     let ollamaUrl;
     let authHeaders = { 'Content-Type': 'application/json' };
     if (activeProvider === 'ollama-cloud') {
-      // Ollama Cloud (official ollama.com)
+      // Ollama Cloud (official ollama.com — uses OLLAMA_API_KEY)
       ollamaUrl = 'https://ollama.com';
       const apiKey = await ollamaManager.loadOllamaCloudKey();
-      if (apiKey) authHeaders['Authorization'] = `Bearer ${apiKey}`;
+      if (apiKey) {
+        authHeaders['Authorization'] = `Bearer ${apiKey}`;
+      } else {
+        // No API key configured — skip to fallback
+        const result = await askAI(prompt);
+        sendSSE('done', result);
+        res.end();
+        return;
+      }
     } else if (activeProvider === 'cloud') {
       try {
         const cloudEndpoints = await ollamaManager.loadCloudEndpoints();

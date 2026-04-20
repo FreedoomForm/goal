@@ -164,7 +164,6 @@ async function renderAIEngine(container) {
             </div>
             <div class="item-actions">
               <button class="btn btn-sm btn-primary" id="btnConfigOllamaCloud">⚙️ Настроить</button>
-              <button class="btn btn-sm" id="btnOllamaSignin">🔑 Ollama Signin</button>
             </div>
           </div>
           <div class="item-row">
@@ -180,7 +179,7 @@ async function renderAIEngine(container) {
           <div style="padding:12px;background:${ollamaCloudOnline ? '#0d1f12' : '#1a1510'};border-radius:12px;border:1px solid ${ollamaCloudOnline ? '#1a3a20' : '#3a2a10'};font-size:13px;color:${ollamaCloudOnline ? '#8ecf9a' : '#cfaa5a'}">
             ${ollamaCloudOnline
               ? '✅ Ollama Cloud подключен! Облачные модели доступны в селекторе моделей. Запускайте модели до 671B параметров без GPU.'
-              : '💡 Для подключения к Ollama Cloud получите API ключ на <a href="https://ollama.com" target="_blank" style="color:#59a8ff">ollama.com</a> или выполните <code style="background:#0b1220;padding:2px 6px;border-radius:4px">ollama signin</code> в терминале.'
+              : '💡 Для подключения к Ollama Cloud получите API ключ на <a href="https://ollama.com" target="_blank" style="color:#59a8ff">ollama.com</a> или задайте переменную окружения <code style="background:#0b1220;padding:2px 6px;border-radius:4px">OLLAMA_API_KEY</code>.'
             }
           </div>
         </div>
@@ -449,7 +448,7 @@ async function renderAIEngine(container) {
         <strong>Как получить API ключ:</strong><br>
         1. Зарегистрируйтесь на <a href="https://ollama.com" target="_blank" style="color:#59a8ff">ollama.com</a><br>
         2. Создайте API ключ в настройках аккаунта<br>
-        3. Вставьте ключ ниже или выполните <code style="background:#0b1220;padding:2px 6px;border-radius:4px">ollama signin</code> в терминале
+        3. Вставьте ключ ниже или задайте env <code style="background:#0b1220;padding:2px 6px;border-radius:4px">OLLAMA_API_KEY</code>
       </div>
       <div class="form-group">
         <label class="form-label">Ollama Cloud API Key</label>
@@ -509,15 +508,8 @@ async function renderAIEngine(container) {
     });
   });
 
-  $('btnOllamaSignin')?.addEventListener('click', async () => {
-    showToast('Запуск ollama signin... Откройте терминал если появится окно авторизации', 'info');
-    try {
-      await api('/api/ai/ollama-cloud/signin', { method: 'POST' });
-      showToast('Ollama signin завершен', 'success');
-    } catch (err) {
-      showToast('Ollama signin: ' + err.message, 'warning');
-    }
-  });
+  // Ollama Signin removed — use API key from ollama.com instead of `ollama signin`
+  // `ollama signin` is for model sharing/registry, not cloud inference
 
   // Cloud endpoint management
   $('btnAddCloudEndpoint')?.addEventListener('click', () => {

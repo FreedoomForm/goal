@@ -144,13 +144,6 @@ function navigateTo(page) {
 
 async function renderPage(page) {
   const container = $('pageContainer');
-  // Aggressively force-hide all overlays to prevent blur/blank screen on Windows Electron
-  // This fixes the race condition where splash/loading screens linger at z-index 99998-99999
-  const splash = $('splashScreen');
-  const loading = $('loadingScreen');
-  if (splash) { splash.style.display = 'none'; splash.style.opacity = '0'; }
-  if (loading) { loading.style.display = 'none'; loading.style.opacity = '0'; }
-  window._splashDismissed = true;
 
   try {
     switch (page) {
@@ -1769,55 +1762,15 @@ async function renderSettings(container) {
 }
 
 /* ══════════════ INIT ══════════════ */
-/* ══════════════ Splash Screen — DISABLED to prevent blur overlay bug ══════════════ */
-// The splash sequence was causing the "blur screen" bug on Windows Electron:
-// 1. runSplashSequence() sets splash.style.display = 'flex' (z-index 99998)
-// 2. The splash overlay covers everything, and race conditions with hideSplash()
-//    caused it to persist even after navigation to planning page.
-// 3. Now we skip the splash entirely and go straight to the dashboard.
-async function runSplashSequence() {
-  // Immediately force-hide all overlays — no splash animation
-  const splash = $('splashScreen');
-  const ls = $('loadingScreen');
-  if (splash) { splash.style.display = 'none'; splash.classList.add('hidden'); }
-  if (ls) { ls.style.display = 'none'; ls.style.opacity = '0'; }
-  window._splashDismissed = true;
-
-  // Run setup checks silently in background (no visual splash)
-  try { await Promise.race([api('/api/health').catch(() => {}), new Promise(r => setTimeout(r, 2000))]); } catch {}
-  try { await Promise.race([api('/api/ai/status').catch(() => {}), new Promise(r => setTimeout(r, 1500))]); } catch {}
-  try { await Promise.race([api('/api/mcp/servers').catch(() => {}), new Promise(r => setTimeout(r, 1500))]); } catch {}
-}
-
-function hideLoadingScreen() {
-  const ls = $('loadingScreen');
-  if (ls) { ls.style.opacity = '0'; ls.style.display = 'none'; ls.style.visibility = 'hidden'; }
-}
-
-function hideSplash() {
-  // Mark splash as dismissed so the load handler in index.html won't re-show it
-  window._splashDismissed = true;
-
-  // Hide both splash and loading screens IMMEDIATELY (no transition delay)
-  hideLoadingScreen();
-  const splash = $('splashScreen');
-  if (splash) {
-    splash.style.display = 'none';
-    splash.style.opacity = '0';
-    splash.style.visibility = 'hidden';
-    splash.classList.add('hidden');
-    splash.classList.add('hiding');
-    splash.classList.remove('visible');
-  }
-}
+/* ══════════════ Splash/Loading — PERMANENTLY DISABLED ══════════════ */
+// The splash/loading overlays were causing the "blur screen" bug on Windows
+// Electron. They used z-index 99998-99999 with opaque backgrounds and were
+// only hidden by JS — race conditions caused them to persist.
+// Now the overlays are display:none by default (see index.html) and CSS
+// !important rules prevent them from ever being shown.
+// Electron's ready-to-show in main.js handles the initial blank window.
 
 window.addEventListener('DOMContentLoaded', () => {
-  // Start splash screen (auto-download Ollama & OpenClaw in background)
-  runSplashSequence();
-
-  // Skip button
-  $('splashSkip')?.addEventListener('click', hideSplash);
-
   // Navigation
   $$('.nav-item').forEach(item => {
     item.addEventListener('click', (e) => {

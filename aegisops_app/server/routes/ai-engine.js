@@ -19,13 +19,16 @@ const RECOMMENDED_MODELS = [
   { name: 'qwen2.5:14b', desc: 'Высокое качество анализа для мощных машин', size: '8.7 GB', recommended: false, localOnly: false },
 ];
 
-// Ollama Cloud models (available via ollama.com)
+// Ollama Cloud models (available via ollama.com with OLLAMA_API_KEY)
+// These are official Ollama Cloud models with the -cloud suffix
 const OLLAMA_CLOUD_MODELS = [
-  { name: 'gpt-oss:120b-cloud', desc: 'Мощная облачная модель 120B параметров — через Ollama Cloud', size: 'Cloud', recommended: true },
-  { name: 'gpt-oss:70b-cloud', desc: 'Облачная модель 70B — через Ollama Cloud', size: 'Cloud', recommended: false },
-  { name: 'llama3.3:70b-cloud', desc: 'Llama 3.3 70B в облаке Ollama', size: 'Cloud', recommended: false },
-  { name: 'qwen2.5:72b-cloud', desc: 'Qwen 2.5 72B в облаке Ollama', size: 'Cloud', recommended: false },
-  { name: 'deepseek-r1:671b-cloud', desc: 'DeepSeek R1 671B — крупнейшая модель в Ollama Cloud', size: 'Cloud', recommended: false },
+  { name: 'gpt-oss:120b-cloud', desc: 'Мощная облачная модель 120B — Ollama Cloud', size: 'Cloud', recommended: true },
+  { name: 'gpt-oss:70b-cloud', desc: 'Облачная модель 70B — Ollama Cloud', size: 'Cloud', recommended: false },
+  { name: 'llama3.3:70b-cloud', desc: 'Llama 3.3 70B — Ollama Cloud', size: 'Cloud', recommended: true },
+  { name: 'qwen2.5:72b-cloud', desc: 'Qwen 2.5 72B — Ollama Cloud', size: 'Cloud', recommended: false },
+  { name: 'deepseek-r1:671b-cloud', desc: 'DeepSeek R1 671B — Ollama Cloud', size: 'Cloud', recommended: false },
+  { name: 'gemma3:27b-cloud', desc: 'Gemma 3 27B — Ollama Cloud', size: 'Cloud', recommended: false },
+  { name: 'mistral-small:24b-cloud', desc: 'Mistral Small 24B — Ollama Cloud', size: 'Cloud', recommended: false },
 ];
 
 // Track pull progress
@@ -463,14 +466,14 @@ router.get('/ollama-cloud/status', async (req, res) => {
   }
 });
 
-/* ── Ollama Cloud: Run ollama signin ── */
-router.post('/ollama-cloud/signin', async (req, res) => {
-  try {
-    const result = await ollamaManager.ollamaSignin();
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+/* ── Ollama Cloud: Get env var status ── */
+router.get('/ollama-cloud/env', (req, res) => {
+  res.json({
+    OLLAMA_API_KEY_set: !!process.env.OLLAMA_API_KEY,
+    OLLAMA_API_KEY_prefix: process.env.OLLAMA_API_KEY
+      ? process.env.OLLAMA_API_KEY.slice(0, 8) + '...'
+      : null,
+  });
 });
 
 /* ── OpenClaw status ── */

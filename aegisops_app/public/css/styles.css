@@ -1809,20 +1809,27 @@ select:focus-visible {
   }
 }
 
-/* ═════════ Splash Screen Steps ═════════ */
-/* Splash screen transitions */
+/* ═════════ Splash/Loading Overlay Safety Net ═════════ */
+/* Force-hide loading/splash overlays — prevents the "blur screen" bug on
+   Windows Electron where these overlays (z-index 99998-99999) cover the
+   entire page if JS fails to hide them quickly enough. */
+#loadingScreen,
 #splashScreen {
-  transition: opacity 0.6s ease, visibility 0.6s ease;
-}
-#splashScreen.hiding {
-  opacity: 0;
-  pointer-events: none;
-}
-#splashScreen.hidden {
-  visibility: hidden;
-  pointer-events: none;
   display: none !important;
   opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: -1 !important;
+  transition: none !important;
+}
+#splashScreen.hiding,
+#splashScreen.hidden {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
 }
 .splash-step {
   padding: 8px 12px;
