@@ -2,11 +2,15 @@
 .planning-wrap {
   display: grid;
   grid-template-columns: 260px 1fr 320px;
-  grid-template-rows: 1fr;        /* explicit single row that stretches */
+  grid-template-rows: 1fr;
   gap: 16px;
-  height: calc(100vh - 180px);
-  min-height: 600px;
-  align-items: stretch;           /* ensure grid items stretch to full height */
+  /* Use a fixed height that works reliably in both browser and Electron.
+     On Electron, 100vh inside a flex/grid parent can be unreliable.
+     We use a JS-computed fallback: the page container gets an explicit height
+     set by renderPlanningPage(), and this grid fills 100% of it. */
+  height: 100%;
+  min-height: 550px;
+  align-items: stretch;
 }
 
 .planning-palette {

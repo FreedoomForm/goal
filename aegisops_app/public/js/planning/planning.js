@@ -13,6 +13,13 @@
   }
 
   async function renderPlanningPage(container) {
+    // Set explicit height on the page container so the CSS grid can fill it.
+    // Without this, the container's height is "auto" (driven by content) which
+    // causes the grid's height:100% to resolve to 0 in Electron.
+    const computedH = Math.max(550, window.innerHeight - 180);
+    container.style.height = computedH + 'px';
+    container.style.overflow = 'hidden';
+
     container.innerHTML = `
       <div class="page-header">
         <div>

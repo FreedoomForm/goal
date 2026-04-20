@@ -186,6 +186,10 @@ function navigateTo(page) {
 async function renderPage(page) {
   const container = $('pageContainer');
 
+  // Reset container height/overflow when leaving the Planning page
+  container.style.height = '';
+  container.style.overflow = '';
+
   try {
     switch (page) {
       case 'dashboard': await renderDashboard(container); break;
