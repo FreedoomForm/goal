@@ -1,16 +1,12 @@
 /**
  * AegisOps — Mobile / Remote Access page.
- * Primary: Local WebSocket Gateway (no cloud dependency — LAN direct)
- * Optional: Cloudflare/ngrok tunnel for internet access.
+ * Local WebSocket Gateway only — no cloud dependency, LAN direct.
  */
 (function () {
   'use strict';
 
   async function renderMobilePage(container) {
-    const [tunnelStatus, gatewayStatus] = await Promise.all([
-      fetch('/api/tunnel/status').then(r => r.json()).catch(() => ({ active: false })),
-      fetch('/api/gateway/status').then(r => r.json()).catch(() => ({ active: false })),
-    ]);
+    const gatewayStatus = await fetch('/api/gateway/status').then(r => r.json()).catch(() => ({ active: false }));
 
     const gwActive = gatewayStatus.active;
     const lanUrl = gatewayStatus.lan_url || '';
@@ -21,7 +17,7 @@
       <div class="page-header">
         <div>
           <h1 class="page-title">📱 Мобильный доступ</h1>
-          <p class="page-subtitle">Подключите Android-приложение AegisOps к этому ПК через локальную сеть или интернет.</p>
+          <p class="page-subtitle">Подключите Android-приложение AegisOps к этому ПК через локальную сеть. Прямое подключение — без облака, без туннелей.</p>
         </div>
       </div>
 
@@ -42,17 +38,6 @@
           <p style="color:#8ea1c9;margin-bottom:12px;">Сгенерируйте код — APK отсканирует QR или введёт код вручную.</p>
           <button class="btn btn-primary" id="pairBtn">🔑 Создать код сопряжения</button>
           <div id="pairResult" style="margin-top:16px;"></div>
-        </div>
-      </div>
-
-      <div class="card" style="margin-top:16px;">
-        <h2>🌐 Публичный туннель <span style="font-size:12px;color:#8ea1c9;font-weight:400;">(опционально — для доступа через интернет)</span></h2>
-        <p style="color:#8ea1c9;margin-bottom:12px;">Туннель делает сервер доступным из любой точки сети. Требует установки cloudflared или ngrok.</p>
-        <div id="tunnelStatus"></div>
-        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
-          <button class="btn btn-ghost" id="tunnelStart">☁️ Запустить Cloudflare</button>
-          <button class="btn btn-ghost" id="tunnelStop">⏹ Остановить</button>
-          <button class="btn btn-ghost" id="tunnelManual">✎ Ввести вручную</button>
         </div>
       </div>
 
@@ -125,12 +110,12 @@
       const gw = await fetch('/api/gateway/status').then(r => r.json()).catch(() => ({ active: false }));
       const r = await fetch('/api/auth/pair/request', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label: 'Mobile ' + new Date().toLocaleString('ru-RU') }) }).then(r => r.json());
 
-      // Build QR payload: prefer WS gateway URL, fallback to HTTP
+      // Build QR payload: prefer local WS gateway URL
       let wsBase = '';
       if (gw.active && gw.lan_url) {
         wsBase = gw.lan_url;
       }
-      const httpBase = r.public_base_url || location.origin;
+      const httpBase = location.origin;
       const qrPayload = JSON.stringify({
         base: httpBase,
         ws: wsBase,
@@ -165,52 +150,6 @@
 
       document.getElementById('gatewayQR').innerHTML = gwQrHtml;
       renderKeys();
-    };
-
-    /* ── Tunnel status rendering ── */
-    async function renderTunnelStatus() {
-      const s = await fetch('/api/tunnel/status').then(r => r.json());
-      const el = document.getElementById('tunnelStatus');
-      if (s.active && s.url) {
-        el.innerHTML = `
-          <div class="tunnel-live">
-            <span class="badge badge-success">ACTIVE</span>
-            <div style="margin-top:8px;">Provider: <code>${s.provider}</code></div>
-            <div style="margin-top:4px;">URL: <a href="${s.url}" target="_blank">${s.url}</a></div>
-          </div>
-        `;
-      } else if (s.url) {
-        el.innerHTML = `
-          <div>
-            <span class="badge badge-neutral">CONFIGURED</span>
-            <div style="margin-top:8px;">URL: <a href="${s.url}" target="_blank">${s.url}</a></div>
-          </div>
-        `;
-      } else {
-        el.innerHTML = `<span class="badge badge-neutral">Не настроен</span>`;
-      }
-    }
-    renderTunnelStatus();
-
-    document.getElementById('tunnelStart').onclick = async () => {
-      window.showToast?.('Запускаем туннель...', 'info');
-      try {
-        const r = await fetch('/api/tunnel/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: 'cloudflared' }) });
-        const data = await r.json();
-        if (!r.ok) throw new Error(data.error);
-        window.showToast?.(`Туннель активен: ${data.url}`, 'success');
-        renderTunnelStatus();
-      } catch (err) { window.showToast?.('Ошибка: ' + err.message + ' (установите cloudflared)', 'error'); }
-    };
-    document.getElementById('tunnelStop').onclick = async () => {
-      await fetch('/api/tunnel/stop', { method: 'POST' });
-      window.showToast?.('Остановлен', 'info'); renderTunnelStatus();
-    };
-    document.getElementById('tunnelManual').onclick = async () => {
-      const url = prompt('Публичный URL сервера (https://...):');
-      if (!url) return;
-      await fetch('/api/tunnel/manual', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
-      renderTunnelStatus();
     };
 
     /* ── Connected devices ── */

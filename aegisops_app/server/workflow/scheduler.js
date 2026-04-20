@@ -37,15 +37,15 @@ const activeCronJobs = new Map(); // workflowId → cron task
 
 /**
  * Start the cron scheduler for all enabled workflows with cron expressions.
+ * Syncs workflow_schedules table with active cron jobs.
  */
 async function startScheduler() {
-  // Stop existing jobs
-  for (const [wfId, task] of activeCronJobs) {
-    task.stop();
-  }
-  activeCronJobs.clear();
+  // Stop all existing jobs first
+  stopScheduler();
 
-  const workflows = await queryAll('SELECT * FROM workflows WHERE enabled = 1 AND cron_expr != ""');
+  const workflows = await queryAll(
+    "SELECT * FROM workflows WHERE enabled = 1 AND cron_expr IS NOT NULL AND cron_expr <> ''"
+  );
   let scheduled = 0;
 
   for (const wf of workflows) {
@@ -63,30 +63,129 @@ async function startScheduler() {
         log.info('scheduler.firing', { workflow_id: wf.id, workflow_name: wf.name, cron: cronExpr });
         try {
           await runWorkflow(wf.id, { triggered_by: 'cron', cron: cronExpr });
-          // Update next_run
-          await runSQL('UPDATE workflow_schedules SET last_run = ?, next_run = ? WHERE workflow_id = ?',
-            [nowISO(), getNextRun(cronExpr), wf.id]);
         } catch (err) {
           log.error('scheduler.execution_error', { workflow_id: wf.id, error: err.message });
+        }
+        // Always update schedule record after execution attempt
+        try {
+          const nextRun = getNextRun(cronExpr);
+          await runSQL(
+            'UPDATE workflow_schedules SET last_run = ?, next_run = ?, retry_count = 0, updated_at = ? WHERE workflow_id = ?',
+            [nowISO(), nextRun, nowISO(), wf.id]
+          );
+        } catch (updErr) {
+          log.warn('scheduler.schedule_update_error', { workflow_id: wf.id, error: updErr.message });
         }
       }, { scheduled: true });
 
       activeCronJobs.set(wf.id, task);
       scheduled++;
 
-      // Create or update schedule record
+      // Upsert schedule record in workflow_schedules
+      const nextRun = getNextRun(cronExpr);
       await runSQL(
-        `INSERT INTO workflow_schedules (workflow_id, cron_expr, next_run, status, created_at, updated_at)
-         VALUES (?, ?, ?, 'active', ?, ?)
-         ON CONFLICT(workflow_id) DO UPDATE SET cron_expr=?, next_run=?, updated_at=?`,
-        [wf.id, cronExpr, getNextRun(cronExpr), nowISO(), nowISO(), cronExpr, getNextRun(cronExpr), nowISO()]
+        `INSERT INTO workflow_schedules (workflow_id, cron_expr, next_run, status, retry_count, max_retries, timeout_ms, created_at, updated_at)
+         VALUES (?, ?, ?, 'active', 0, 3, 300000, ?, ?)
+         ON CONFLICT(workflow_id) DO UPDATE SET cron_expr = ?, next_run = ?, status = 'active', updated_at = ?`,
+        [wf.id, cronExpr, nextRun, nowISO(), nowISO(), cronExpr, nextRun, nowISO()]
       );
     } catch (err) {
       log.warn('scheduler.setup_error', { workflow_id: wf.id, error: err.message });
     }
   }
 
+  // Mark schedules for disabled/unscheduled workflows as paused
+  try {
+    const activeIds = Array.from(activeCronJobs.keys());
+    if (activeIds.length > 0) {
+      const placeholders = activeIds.map(() => '?').join(',');
+      await runSQL(
+        `UPDATE workflow_schedules SET status = 'paused', updated_at = ? WHERE workflow_id NOT IN (${placeholders}) AND status = 'active'`,
+        [nowISO(), ...activeIds]
+      );
+    } else {
+      await runSQL(
+        "UPDATE workflow_schedules SET status = 'paused', updated_at = ? WHERE status = 'active'",
+        [nowISO()]
+      );
+    }
+  } catch (err) {
+    log.warn('scheduler.pause_error', { error: err.message });
+  }
+
   log.info('scheduler.started', { scheduled, total: workflows.length });
+}
+
+/**
+ * Re-sync the scheduler after a workflow is created, updated, or deleted.
+ * Only re-registers the changed workflow's cron job instead of full restart.
+ */
+async function syncScheduler(workflowId) {
+  if (!workflowId) {
+    // Full re-sync
+    return startScheduler();
+  }
+
+  // Stop existing cron job for this workflow (if any)
+  const existingTask = activeCronJobs.get(workflowId);
+  if (existingTask) {
+    existingTask.stop();
+    activeCronJobs.delete(workflowId);
+  }
+
+  // Fetch the current workflow state
+  const wf = await queryOne('SELECT * FROM workflows WHERE id = ?', [workflowId]);
+  if (!wf || !wf.enabled || !wf.cron_expr?.trim()) {
+    // Workflow disabled or no cron — mark schedule as paused
+    try {
+      await runSQL(
+        "UPDATE workflow_schedules SET status = 'paused', updated_at = ? WHERE workflow_id = ?",
+        [nowISO(), workflowId]
+      );
+    } catch {}
+    return;
+  }
+
+  const cronExpr = wf.cron_expr.trim();
+  if (!cron.validate(cronExpr)) {
+    log.warn('scheduler.invalid_cron', { workflow_id: workflowId, cron: cronExpr });
+    return;
+  }
+
+  try {
+    const task = cron.schedule(cronExpr, async () => {
+      log.info('scheduler.firing', { workflow_id: wf.id, workflow_name: wf.name, cron: cronExpr });
+      try {
+        await runWorkflow(wf.id, { triggered_by: 'cron', cron: cronExpr });
+      } catch (err) {
+        log.error('scheduler.execution_error', { workflow_id: wf.id, error: err.message });
+      }
+      try {
+        const nextRun = getNextRun(cronExpr);
+        await runSQL(
+          'UPDATE workflow_schedules SET last_run = ?, next_run = ?, retry_count = 0, updated_at = ? WHERE workflow_id = ?',
+          [nowISO(), nextRun, nowISO(), wf.id]
+        );
+      } catch (updErr) {
+        log.warn('scheduler.schedule_update_error', { workflow_id: wf.id, error: updErr.message });
+      }
+    }, { scheduled: true });
+
+    activeCronJobs.set(workflowId, task);
+
+    // Upsert schedule record
+    const nextRun = getNextRun(cronExpr);
+    await runSQL(
+      `INSERT INTO workflow_schedules (workflow_id, cron_expr, next_run, status, retry_count, max_retries, timeout_ms, created_at, updated_at)
+       VALUES (?, ?, ?, 'active', 0, 3, 300000, ?, ?)
+       ON CONFLICT(workflow_id) DO UPDATE SET cron_expr = ?, next_run = ?, status = 'active', updated_at = ?`,
+      [workflowId, cronExpr, nextRun, nowISO(), nowISO(), cronExpr, nextRun, nowISO()]
+    );
+
+    log.info('scheduler.synced', { workflow_id: workflowId, cron: cronExpr });
+  } catch (err) {
+    log.warn('scheduler.sync_error', { workflow_id: workflowId, error: err.message });
+  }
 }
 
 function getNextRun(cronExpr) {
@@ -441,14 +540,19 @@ function safePreview(value) {
 /* ─── Persistence Helpers ─── */
 async function saveWorkflow({ id, name, description, graph, cron_expr, enabled }) {
   const ts = nowISO();
+  let savedId = id;
   if (id) {
     await runSQL('UPDATE workflows SET name=?, description=?, graph=?, cron_expr=?, enabled=?, updated_at=? WHERE id=?',
       [name, description || '', JSON.stringify(graph), cron_expr || '', enabled ? 1 : 0, ts, id]);
-    return await queryOne('SELECT * FROM workflows WHERE id=?', [id]);
+  } else {
+    const r = await runSQL(`INSERT INTO workflows (name, description, graph, cron_expr, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [name, description || '', JSON.stringify(graph), cron_expr || '', enabled ? 1 : 0, ts, ts]);
+    savedId = r.lastInsertRowid;
   }
-  const r = await runSQL(`INSERT INTO workflows (name, description, graph, cron_expr, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [name, description || '', JSON.stringify(graph), cron_expr || '', enabled ? 1 : 0, ts, ts]);
-  return await queryOne('SELECT * FROM workflows WHERE id=?', [r.lastInsertRowid]);
+  const wf = await queryOne('SELECT * FROM workflows WHERE id=?', [savedId]);
+  // Re-sync scheduler for this workflow after save
+  try { await syncScheduler(savedId); } catch {}
+  return wf;
 }
 
 async function listWorkflows() {
@@ -571,5 +675,5 @@ function nodeCatalog() {
 module.exports = {
   executeGraph, runWorkflow, saveWorkflow, listWorkflows, getWorkflow,
   deleteWorkflow, listRuns, nodeCatalog,
-  startScheduler, stopScheduler, activeCronJobs,
+  startScheduler, stopScheduler, syncScheduler, activeCronJobs,
 };

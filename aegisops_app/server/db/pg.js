@@ -56,6 +56,15 @@ function nowISO() {
   return new Date().toISOString().replace('T', ' ').slice(0, 19);
 }
 
+/* ─── Placeholder conversion: ? → $1, $2, … for PostgreSQL ─── */
+function convertPlaceholders(sql) {
+  if (!pgAvailable) return sql;
+  // Already using $N style — skip
+  if (/\$1\b/.test(sql)) return sql;
+  let idx = 0;
+  return sql.replace(/\?/g, () => `$${++idx}`);
+}
+
 async function createPool() {
   if (!pg) {
     log.warn('pg.unavailable', { reason: 'pg module not installed' });
@@ -301,6 +310,25 @@ INSERT INTO settings (key, value) VALUES
 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();
 `;
 
+const SEED_WORKFLOWS = `
+INSERT INTO workflows (name, description, graph, enabled, cron_expr) VALUES
+  (
+    'Ежедневный мониторинг коннекторов',
+    'Автоматическая проверка доступности всех коннекторов каждый день в 9:00',
+    '{"nodes":[{"id":"n1","type":"trigger.cron","params":{"cron":"0 9 * * *"}},{"id":"n2","type":"connector.test","params":{"connector_id":1}},{"id":"n3","type":"data.transform","params":{"expression":"$input"}},{"id":"n4","type":"output.report","params":{"template":"<h2>Мониторинг коннекторов</h2><pre>{{input}}</pre>"}}],"edges":[{"from":"n1","to":"n2"},{"from":"n2","to":"n3"},{"from":"n3","to":"n4"}],"config":{"max_retries":1,"retry_delay_ms":2000,"timeout_ms":30000}}'::jsonb,
+    1,
+    '0 9 * * *'
+  ),
+  (
+    'Еженедельный анализ SCADA',
+    'Еженедельный анализ телеметрии SCADA с помощью AI каждый понедельник в 8:00',
+    '{"nodes":[{"id":"n1","type":"trigger.cron","params":{"cron":"0 8 * * 1"}},{"id":"n2","type":"connector.fetch","params":{"connector_id":5,"query":{"nodes":["ns=2;i=2"]}}},{"id":"n3","type":"ai.ask","params":{"prompt_template":"Проанализируй показания SCADA: {{$input}}","system":"Ты аналитик SCADA систем."}},{"id":"n4","type":"output.report","params":{"template":"<h2>Анализ SCADA</h2><pre>{{input}}</pre>"}}],"edges":[{"from":"n1","to":"n2"},{"from":"n2","to":"n3"},{"from":"n3","to":"n4"}],"config":{"max_retries":2,"retry_delay_ms":3000,"timeout_ms":120000}}'::jsonb,
+    1,
+    '0 8 * * 1'
+  )
+ON CONFLICT DO NOTHING;
+`;
+
 /* ─── Database Initialization ─── */
 async function initDB(customDir) {
   pool = await createPool();
@@ -347,6 +375,12 @@ async function seedIfEmpty() {
     await pool.query(SEED_SETTINGS);
     log.info('pg.seeded');
   }
+  // Seed demo workflows if none exist
+  const wfResult = await pool.query('SELECT COUNT(*) as c FROM workflows');
+  if (parseInt(wfResult.rows[0].c) === 0) {
+    await pool.query(SEED_WORKFLOWS);
+    log.info('pg.seeded_workflows');
+  }
 }
 
 async function initSQLite(customDir) {
@@ -375,7 +409,7 @@ async function initSQLite(customDir) {
     CREATE TABLE IF NOT EXISTS api_keys (id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE, scopes TEXT DEFAULT '[]', created_at TEXT NOT NULL, last_used_at TEXT, revoked INTEGER DEFAULT 0);
     CREATE TABLE IF NOT EXISTS mcp_servers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, preset TEXT NOT NULL, config TEXT DEFAULT '{}', auto_start INTEGER DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS dmz_proxies (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, connector_id INTEGER NOT NULL, proxy_host TEXT NOT NULL DEFAULT '127.0.0.1', proxy_port INTEGER NOT NULL DEFAULT 4840, target_host TEXT NOT NULL, target_port INTEGER NOT NULL, mode TEXT NOT NULL DEFAULT 'read_only', allowed_operations TEXT DEFAULT '["read"]', rate_limit_per_sec INTEGER DEFAULT 10, audit_all INTEGER DEFAULT 1, enabled INTEGER DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS workflow_schedules (id INTEGER PRIMARY KEY AUTOINCREMENT, workflow_id INTEGER NOT NULL, cron_expr TEXT NOT NULL, next_run TEXT, last_run TEXT, status TEXT DEFAULT 'active', retry_count INTEGER DEFAULT 0, max_retries INTEGER DEFAULT 3, timeout_ms INTEGER DEFAULT 300000, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS workflow_schedules (id INTEGER PRIMARY KEY AUTOINCREMENT, workflow_id INTEGER NOT NULL UNIQUE, cron_expr TEXT NOT NULL, next_run TEXT, last_run TEXT, status TEXT DEFAULT 'active', retry_count INTEGER DEFAULT 0, max_retries INTEGER DEFAULT 3, timeout_ms INTEGER DEFAULT 300000, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS etl_run_log (id INTEGER PRIMARY KEY AUTOINCREMENT, pipeline_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'running', started_at TEXT NOT NULL, finished_at TEXT, rows_extracted INTEGER DEFAULT 0, rows_transformed INTEGER DEFAULT 0, rows_loaded INTEGER DEFAULT 0, rows_rejected INTEGER DEFAULT 0, errors TEXT DEFAULT '[]', metrics TEXT DEFAULT '{}');
   `);
   saveSQLite();
@@ -401,7 +435,7 @@ function flushDB() {
 /* ─── Unified Query Interface ─── */
 async function queryAll(sql, params = []) {
   if (pgAvailable && pool) {
-    const result = await pool.query(sql, params);
+    const result = await pool.query(convertPlaceholders(sql), params);
     return result.rows;
   }
   if (!sqliteDB) throw new Error('Database not initialized');
@@ -420,7 +454,7 @@ async function queryOne(sql, params = []) {
 
 async function runSQL(sql, params = []) {
   if (pgAvailable && pool) {
-    const result = await pool.query(sql, params);
+    const result = await pool.query(convertPlaceholders(sql), params);
     let lastId = 0;
     if (result.rows && result.rows.length > 0) {
       lastId = result.rows[0].id || result.rows[0].lastInsertRowid || 0;
