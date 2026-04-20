@@ -33,6 +33,7 @@ async function runNode(node, inbound, ctx) {
   switch (node.type) {
     case 'trigger.manual':
     case 'trigger.cron':
+    case 'trigger.webhook':
       return { output: ctx.triggerPayload || {} };
 
     case 'connector.test': {
@@ -47,6 +48,15 @@ async function runNode(node, inbound, ctx) {
       if (!row) throw new Error(`connector ${node.params.connector_id} not found`);
       const c = createConnector(row);
       return { output: await c.fetchData(node.params.query || {}) };
+    }
+
+    case 'connector.write': {
+      const row = await queryOne('SELECT * FROM connectors WHERE id=?', [node.params.connector_id]);
+      if (!row) throw new Error(`connector ${node.params.connector_id} not found`);
+      const c = createConnector(row);
+      const payload = node.params.query || input || {};
+      const result = await c.sendData ? await c.sendData(payload) : { written: true };
+      return { output: result };
     }
 
     case 'ai.ask': {
@@ -77,6 +87,18 @@ async function runNode(node, inbound, ctx) {
     case 'data.filter': {
       const pass = !!safeEval(node.params.expression || 'true', { input, ...ctx });
       return { output: input, skip: !pass };
+    }
+
+    case 'data.merge': {
+      // Merge all inbound data into a single object/array
+      const merged = Array.isArray(input) ? input : [input];
+      const flat = merged.flat();
+      if (flat.length === 0) return { output: {} };
+      // If items are objects, deep merge; otherwise return array
+      if (flat.every(item => typeof item === 'object' && item !== null && !Array.isArray(item))) {
+        return { output: Object.assign({}, ...flat) };
+      }
+      return { output: flat };
     }
 
     case 'output.webhook': {
@@ -232,10 +254,12 @@ function nodeCatalog() {
     { category: 'Триггеры', items: [
       { type: 'trigger.manual', label: 'Ручной запуск', icon: '▶️', params: {} },
       { type: 'trigger.cron', label: 'По расписанию (cron)', icon: '⏰', params: { cron: '0 9 * * *' } },
+      { type: 'trigger.webhook', label: 'Webhook', icon: '🌐', params: { path: '/hook' } },
     ]},
     { category: 'Коннекторы', items: [
       { type: 'connector.test', label: 'Проверить коннектор', icon: '🔌', params: { connector_id: null } },
       { type: 'connector.fetch', label: 'Получить данные', icon: '📥', params: { connector_id: null, query: {} } },
+      { type: 'connector.write', label: 'Запись данных', icon: '📤', params: { connector_id: null } },
     ]},
     { category: 'ИИ и MCP', items: [
       { type: 'ai.ask', label: 'AI-запрос (Ollama)', icon: '🤖', params: { prompt_template: 'Проанализируй: {{$input}}', system: 'Ты enterprise аналитик.' } },
@@ -244,6 +268,7 @@ function nodeCatalog() {
     { category: 'Данные', items: [
       { type: 'data.transform', label: 'Трансформация (JS)', icon: '🔧', params: { expression: '$input' } },
       { type: 'data.filter', label: 'Фильтр (JS)', icon: '🔍', params: { expression: 'true' } },
+      { type: 'data.merge', label: 'Объединение', icon: '🔗', params: {} },
     ]},
     { category: 'Вывод', items: [
       { type: 'output.telegram', label: 'Отправить в Telegram', icon: '✈️', params: { text: '{{$input}}' } },

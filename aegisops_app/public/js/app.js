@@ -1922,3 +1922,4 @@ window.addEventListener('DOMContentLoaded', () => {
 // Global functions for inline onclick
 window.navigateTo = navigateTo;
 window.hideModal = hideModal;
+window.showToast = showToast;

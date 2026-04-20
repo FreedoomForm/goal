@@ -191,28 +191,33 @@
             }),
           });
           window._wfCurrentId = saved.id;
-          window.showToast?.('Workflow сохранён', 'success');
-        } catch (err) { window.showToast?.('Ошибка: ' + err.message, 'error'); }
+          window.showToast('Workflow сохранён', 'success');
+        } catch (err) { window.showToast('Ошибка: ' + err.message, 'error'); }
       };
 
       document.getElementById('wfLoadBtn').onclick = async () => {
-        const list = await apiJson('/api/workflows');
-        if (!list.length) return window.showToast?.('Нет сохранённых workflow', 'info');
-        const id = prompt('ID workflow:\n' + list.map(w => `${w.id}. ${w.name}`).join('\n'));
-        if (!id) return;
-        const wf = await apiJson('/api/workflows/' + parseInt(id));
-        window._wfCurrentId = wf.id;
-        document.getElementById('wfName').value = wf.name;
-        document.getElementById('wfCron').value = wf.cron_expr || '';
-        canvas.importGraph(wf.graph);
+        try {
+          const list = await apiJson('/api/workflows');
+          if (!list.length) { window.showToast('Нет сохранённых workflow', 'info'); return; }
+          const id = prompt('ID workflow:\n' + list.map(w => `${w.id}. ${w.name}`).join('\n'));
+          if (!id) return;
+          const wf = await apiJson('/api/workflows/' + parseInt(id));
+          window._wfCurrentId = wf.id;
+          document.getElementById('wfName').value = wf.name;
+          document.getElementById('wfCron').value = wf.cron_expr || '';
+          canvas.importGraph(wf.graph);
+          window.showToast('Workflow загружен', 'success');
+        } catch (err) {
+          window.showToast('Ошибка загрузки: ' + err.message, 'error');
+        }
       };
 
       async function runCurrent() {
         if (!window._wfCurrentId) {
-          window.showToast?.('Сначала сохраните workflow', 'warning');
+          window.showToast('Сначала сохраните workflow', 'warning');
           return;
         }
-        window.showToast?.('Запускаем...', 'info');
+        window.showToast('Запускаем...', 'info');
         try {
           const res = await apiJson('/api/workflows/' + window._wfCurrentId + '/run', { method: 'POST', body: JSON.stringify({}) });
           canvas.highlightTrace(res.trace);
@@ -228,13 +233,24 @@
               ${t.output_preview ? `<pre class="trace-preview">${escapeHtml(t.output_preview)}</pre>` : ''}
             </div>
           `).join('');
-          window.showToast?.('Готово', 'success');
-        } catch (err) { window.showToast?.('Ошибка: ' + err.message, 'error'); }
+          window.showToast('Готово', 'success');
+        } catch (err) { window.showToast('Ошибка: ' + err.message, 'error'); }
       }
     };
 
-    // Double-rAF: ensures the browser has rendered the layout before we measure
-    requestAnimationFrame(() => requestAnimationFrame(initCanvas));
+    // Double-rAF: ensures the browser has rendered the layout before we measure.
+    // Wrapped in try/catch so canvas errors are visible instead of silent blank canvas.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      try {
+        initCanvas();
+      } catch (err) {
+        console.error('[Planning] Canvas init failed:', err);
+        canvasEl.innerHTML = '<div style="padding:24px;color:#ff6a6a;text-align:center;">' +
+          '<p style="font-size:18px;margin-bottom:8px;">Ошибка инициализации холста</p>' +
+          '<p style="font-size:13px;color:#8ea1c9;">' + escapeHtml(err.message) + '</p></div>';
+        if (window.showToast) window.showToast('Ошибка холста: ' + err.message, 'error');
+      }
+    }));
 
     // Inspector
     function openInspector(node) {
@@ -251,7 +267,7 @@
       document.getElementById('wfParamsSave').onclick = () => {
         const params = readInspectorValues(node);
         canvas.updateNodeParams(node.id, params);
-        window.showToast?.('Параметры ноды сохранены', 'success');
+        window.showToast('Параметры ноды сохранены', 'success');
       };
     }
 
