@@ -143,8 +143,7 @@ input, textarea, select { font: inherit; }
   display: flex;
   flex-direction: column;
   padding: 20px 14px;
-  background: rgba(10, 17, 32, 0.85);
-  backdrop-filter: blur(24px) saturate(1.6);
+  background: rgba(10, 17, 32, 0.97);
   border-right: 1px solid var(--border-subtle);
   z-index: 100;
   transition: transform var(--duration) var(--ease);
@@ -297,8 +296,7 @@ input, textarea, select { font: inherit; }
 
 /* ── Card System ── */
 .card {
-  background: rgba(17, 27, 46, 0.8);
-  backdrop-filter: blur(12px);
+  background: rgba(17, 27, 46, 0.95);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
   padding: 24px;
@@ -462,8 +460,7 @@ input, textarea, select { font: inherit; }
 }
 
 .stat-card {
-  background: rgba(17, 27, 46, 0.6);
-  backdrop-filter: blur(8px);
+  background: rgba(17, 27, 46, 0.92);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   padding: 20px;
@@ -797,8 +794,7 @@ tbody tr:last-child td {
   font-size: 14px; flex-shrink: 0;
 }
 .chat-message.ai .chat-bubble {
-  background: rgba(17, 27, 46, 0.8);
-  backdrop-filter: blur(12px);
+  background: rgba(17, 27, 46, 0.95);
   border: 1px solid var(--border-default);
   border-left: 3px solid var(--accent-purple);
   padding: 14px 18px;
@@ -1032,8 +1028,7 @@ tbody tr:last-child td {
   gap: 12px;
   padding: 14px 20px;
   border-radius: var(--radius-md);
-  background: var(--bg-elevated);
-  backdrop-filter: blur(16px);
+  background: rgba(14, 22, 40, 0.97);
   border: 1px solid var(--border-default);
   box-shadow: var(--shadow-elevated);
   min-width: 300px;
@@ -1245,9 +1240,7 @@ tbody tr:last-child td {
   align-items: center;
   gap: 12px;
   padding: 12px 16px;
-  background: rgba(10, 17, 32, 0.92);
-  backdrop-filter: blur(24px) saturate(1.6);
-  -webkit-backdrop-filter: blur(24px) saturate(1.6);
+  background: rgba(10, 17, 32, 0.97);
   border-bottom: 1px solid var(--border-subtle);
 }
 .mobile-topbar-spacer { flex: 1; }
@@ -1481,8 +1474,7 @@ select:focus-visible {
   gap: 12px;
 }
 .guide-connector-card {
-  background: rgba(17, 27, 46, 0.6);
-  backdrop-filter: blur(8px);
+  background: rgba(17, 27, 46, 0.92);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   overflow: hidden;
@@ -1830,6 +1822,7 @@ select:focus-visible {
   visibility: hidden;
   pointer-events: none;
   display: none !important;
+  opacity: 0 !important;
 }
 .splash-step {
   padding: 8px 12px;

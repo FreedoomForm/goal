@@ -10,21 +10,22 @@ const ollamaManager = require('../services/ollama-manager');
 
 const router = express.Router();
 
-// Recommended models for gas sector
+// Recommended models for gas sector (local + cloud)
 const RECOMMENDED_MODELS = [
-  { name: 'qwen2.5:7b-instruct', desc: 'Оптимальный баланс качества и скорости для аналитики', size: '4.4 GB', recommended: true },
-  { name: 'llama3.1:8b', desc: 'Универсальная модель для анализа и генерации', size: '4.7 GB', recommended: false },
-  { name: 'gemma3:4b', desc: 'Компактная модель для быстрого инференса', size: '3.3 GB', recommended: false },
-  { name: 'mistral:7b', desc: 'Хорошая для структурированных задач', size: '4.1 GB', recommended: false },
-  { name: 'qwen2.5:14b', desc: 'Высокое качество анализа для мощных машин', size: '8.7 GB', recommended: false },
+  { name: 'qwen2.5:7b-instruct', desc: 'Оптимальный баланс качества и скорости для аналитики', size: '4.4 GB', recommended: true, localOnly: false },
+  { name: 'llama3.1:8b', desc: 'Универсальная модель для анализа и генерации', size: '4.7 GB', recommended: false, localOnly: false },
+  { name: 'gemma3:4b', desc: 'Компактная модель для быстрого инференса', size: '3.3 GB', recommended: false, localOnly: false },
+  { name: 'mistral:7b', desc: 'Хорошая для структурированных задач', size: '4.1 GB', recommended: false, localOnly: false },
+  { name: 'qwen2.5:14b', desc: 'Высокое качество анализа для мощных машин', size: '8.7 GB', recommended: false, localOnly: false },
 ];
 
-// Popular cloud Ollama providers
-const CLOUD_OLLAMA_PRESETS = [
-  { name: 'Ollama Cloud (Official)', url: 'https://api.ollama.cloud', desc: 'Official Ollama cloud service' },
-  { name: 'RunPod Ollama', url: '', desc: 'RunPod serverless Ollama endpoint — enter your RunPod URL' },
-  { name: 'Vast.ai Ollama', url: '', desc: 'Vast.ai Ollama endpoint — enter your instance URL' },
-  { name: 'Custom Cloud Ollama', url: '', desc: 'Any remote Ollama server — enter the URL' },
+// Ollama Cloud models (available via ollama.com)
+const OLLAMA_CLOUD_MODELS = [
+  { name: 'gpt-oss:120b-cloud', desc: 'Мощная облачная модель 120B параметров — через Ollama Cloud', size: 'Cloud', recommended: true },
+  { name: 'gpt-oss:70b-cloud', desc: 'Облачная модель 70B — через Ollama Cloud', size: 'Cloud', recommended: false },
+  { name: 'llama3.3:70b-cloud', desc: 'Llama 3.3 70B в облаке Ollama', size: 'Cloud', recommended: false },
+  { name: 'qwen2.5:72b-cloud', desc: 'Qwen 2.5 72B в облаке Ollama', size: 'Cloud', recommended: false },
+  { name: 'deepseek-r1:671b-cloud', desc: 'DeepSeek R1 671B — крупнейшая модель в Ollama Cloud', size: 'Cloud', recommended: false },
 ];
 
 // Track pull progress
@@ -126,6 +127,33 @@ router.get('/status', async (req, res) => {
       } catch {}
     }
 
+    // Check Ollama Cloud (ollama.com)
+    const ollamaCloudKey = await ollamaManager.loadOllamaCloudKey();
+    let ollamaCloudOnline = false;
+    let ollamaCloudModels = [];
+    if (ollamaCloudKey) {
+      try {
+        const ocRes = await fetch('https://ollama.com/api/tags', {
+          headers: { 'Authorization': `Bearer ${ollamaCloudKey}` },
+          signal: AbortSignal.timeout(8000),
+        });
+        if (ocRes.ok) {
+          ollamaCloudOnline = true;
+          const ocData = await ocRes.json();
+          ollamaCloudModels = (ocData.models || []).map(m => ({
+            name: m.name,
+            size: m.size,
+            family: m.details?.family || '',
+            parameterSize: m.details?.parameter_size || '',
+            modified_at: m.modified_at,
+            provider: 'ollama-cloud',
+            endpointName: 'Ollama Cloud',
+            endpointUrl: 'https://ollama.com',
+          }));
+        }
+      } catch {}
+    }
+
     // OpenClaw status — check MCP servers
     let openclawRunning = false;
     let openclawInstalled = false;
@@ -139,13 +167,20 @@ router.get('/status', async (req, res) => {
     }
 
     // Merge all models for the model selector
-    const allModels = [...localModels, ...cloudModels];
+    const allModels = [...localModels, ...cloudModels, ...ollamaCloudModels];
 
     // Add installed flag to recommended models
-    const installedNames = [...localModels, ...cloudModels].map(m => m.name);
+    const installedNames = allModels.map(m => m.name);
     const recommended = RECOMMENDED_MODELS.map(m => ({
       ...m,
       installed: installedNames.includes(m.name),
+    }));
+
+    // Ollama Cloud available models (can be used even if not yet in installed list)
+    const ollamaCloudAvailable = OLLAMA_CLOUD_MODELS.map(m => ({
+      ...m,
+      installed: installedNames.includes(m.name),
+      available: ollamaCloudOnline,
     }));
 
     res.json({
@@ -160,6 +195,12 @@ router.get('/status', async (req, res) => {
         endpoints: cloudEndpoints,
         models: cloudModels,
       },
+      ollamaCloud: {
+        configured: !!ollamaCloudKey,
+        online: ollamaCloudOnline,
+        models: ollamaCloudModels,
+        available: ollamaCloudAvailable,
+      },
       openclaw: {
         running: openclawRunning,
         installed: openclawInstalled,
@@ -170,7 +211,8 @@ router.get('/status', async (req, res) => {
       allModels,
       providers: [
         { id: 'ollama', name: 'Ollama (Локальный)', online: ollamaOnline },
-        { id: 'ollama_cloud', name: 'Ollama (Облачный)', online: cloudEndpoints.length > 0 },
+        { id: 'ollama_cloud', name: 'Ollama Cloud (Удалённый)', online: cloudEndpoints.length > 0 },
+        { id: 'ollama-cloud', name: 'Ollama Cloud (Official)', online: ollamaCloudOnline },
         { id: 'openclaw', name: 'OpenClaw (MCP)', online: openclawRunning },
         { id: 'fallback', name: 'Built-in Fallback', online: true },
       ],
@@ -273,7 +315,12 @@ router.post('/ollama/install', async (req, res) => {
 router.get('/cloud/endpoints', async (req, res) => {
   try {
     const endpoints = await ollamaManager.loadCloudEndpoints();
-    res.json({ endpoints, presets: CLOUD_OLLAMA_PRESETS });
+    const ollamaCloudKey = await ollamaManager.loadOllamaCloudKey();
+    res.json({
+      endpoints,
+      ollamaCloudConfigured: !!ollamaCloudKey,
+      ollamaCloudModels: OLLAMA_CLOUD_MODELS,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -352,6 +399,75 @@ router.get('/cloud/models', async (req, res) => {
     } catch (err) {
       res.json({ online: false, models: [], error: err.message });
     }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ── Ollama Cloud: Configure API key ── */
+router.post('/ollama-cloud/configure', async (req, res) => {
+  try {
+    const { apiKey } = req.body;
+    if (!apiKey) return res.status(400).json({ error: 'apiKey required' });
+
+    // Test the key first
+    const testResult = await ollamaManager.testOllamaCloud(apiKey);
+    if (testResult.status !== 'online') {
+      return res.json({ configured: false, error: testResult.error || 'Invalid API key', models: [] });
+    }
+
+    // Save the key
+    await ollamaManager.saveOllamaCloudKey(apiKey);
+    res.json({
+      configured: true,
+      models: testResult.models || [],
+      modelCount: testResult.modelCount || 0,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ── Ollama Cloud: Test API key ── */
+router.post('/ollama-cloud/test', async (req, res) => {
+  try {
+    const { apiKey } = req.body;
+    if (!apiKey) return res.status(400).json({ error: 'apiKey required' });
+    const result = await ollamaManager.testOllamaCloud(apiKey);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ── Ollama Cloud: Get status ── */
+router.get('/ollama-cloud/status', async (req, res) => {
+  try {
+    const apiKey = await ollamaManager.loadOllamaCloudKey();
+    const online = await ollamaManager.isOllamaCloudOnline();
+    let models = [];
+    if (online && apiKey) {
+      try {
+        const modelList = await ollamaManager.listModels();
+        models = modelList.ollamaCloud || [];
+      } catch {}
+    }
+    res.json({
+      configured: !!apiKey,
+      online,
+      models,
+      cloudModelsAvailable: OLLAMA_CLOUD_MODELS,
+    });
+  } catch (err) {
+    res.json({ configured: false, online: false, models: [], cloudModelsAvailable: OLLAMA_CLOUD_MODELS });
+  }
+});
+
+/* ── Ollama Cloud: Run ollama signin ── */
+router.post('/ollama-cloud/signin', async (req, res) => {
+  try {
+    const result = await ollamaManager.ollamaSignin();
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

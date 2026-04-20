@@ -89,20 +89,47 @@ function safeJSON(str, fallback) {
 
 /* ────────── AI layer (uses real Ollama connector) ────────── */
 async function askAI(prompt) {
+  const systemMsg = { role: 'system', content: 'Ты enterprise AI-аналитик для газовых компаний и банков. Отвечай структурированно, с цифрами. Русский язык.' };
+  const userMsg = { role: 'user', content: prompt };
+
   // Try local Ollama first
   const ollamaRow = await queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
   if (ollamaRow) {
     try {
       const connector = createConnector(ollamaRow);
-      const result = await connector.chat([
-        { role: 'system', content: 'Ты enterprise AI-аналитик для газовых компаний и банков. Отвечай структурированно, с цифрами. Русский язык.' },
-        { role: 'user', content: prompt },
-      ]);
+      const result = await connector.chat([systemMsg, userMsg]);
       return result;
     } catch (err) {
       // Local Ollama not available — try cloud
     }
   }
+
+  // Try Ollama Cloud (official ollama.com)
+  try {
+    const apiKey = await ollamaManager.loadOllamaCloudKey();
+    if (apiKey) {
+      const res = await fetch('https://ollama.com/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: ollamaManager.getActiveModel() || 'gpt-oss:120b-cloud',
+          stream: false,
+          messages: [systemMsg, userMsg],
+        }),
+        signal: AbortSignal.timeout(30000),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return {
+          provider: 'ollama-cloud',
+          model: data.model || 'gpt-oss:120b-cloud',
+          content: data.message?.content || '',
+          totalDuration: data.total_duration,
+          evalCount: data.eval_count,
+        };
+      }
+    }
+  } catch {}
 
   // Try cloud Ollama endpoints
   try {
@@ -112,10 +139,7 @@ async function askAI(prompt) {
         const cloudRow = await queryOne("SELECT * FROM connectors WHERE id = ?", [endpoint.id]);
         if (cloudRow) {
           const connector = createConnector(cloudRow);
-          const result = await connector.chat([
-            { role: 'system', content: 'Ты enterprise AI-аналитик для газовых компаний и банков. Отвечай структурированно, с цифрами. Русский язык.' },
-            { role: 'user', content: prompt },
-          ]);
+          const result = await connector.chat([systemMsg, userMsg]);
           return result;
         }
       } catch {}
@@ -751,13 +775,18 @@ function createApp() {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
-    const providerLabel = activeProvider === 'cloud' ? 'cloud' : 'ollama';
+    const providerLabel = activeProvider === 'cloud' ? 'cloud' : activeProvider === 'ollama-cloud' ? 'ollama-cloud' : 'ollama';
     sendSSE('meta', { model: activeModel, provider: providerLabel });
 
-    // Determine which Ollama URL to use (local or cloud)
+    // Determine which Ollama URL to use (local, cloud, or ollama-cloud)
     let ollamaUrl;
     let authHeaders = { 'Content-Type': 'application/json' };
-    if (activeProvider === 'cloud') {
+    if (activeProvider === 'ollama-cloud') {
+      // Ollama Cloud (official ollama.com)
+      ollamaUrl = 'https://ollama.com';
+      const apiKey = await ollamaManager.loadOllamaCloudKey();
+      if (apiKey) authHeaders['Authorization'] = `Bearer ${apiKey}`;
+    } else if (activeProvider === 'cloud') {
       try {
         const cloudEndpoints = await ollamaManager.loadCloudEndpoints();
         if (cloudEndpoints.length > 0) {

@@ -222,19 +222,22 @@
   <script src="js/pages/guide.js"></script>
   <script src="js/app.js"></script>
   <script>
-    // Dismiss loading screen and go directly to app — no splash re-show.
-    // Previous splash re-show caused race condition on Windows Electron where
-    // the z-index:99998 splash overlay reappeared after being hidden,
-    // creating the "blur screen" bug on the planning page.
+    // Force-hide ALL overlays immediately on DOMContentLoaded — no delay, no splash.
+    // The splash sequence was the root cause of the "blur screen" bug on Windows Electron:
+    // it set splash.style.display = 'flex' at z-index 99998, covering the planning page.
     window._splashDismissed = true;
+    document.addEventListener('DOMContentLoaded', function() {
+      var ls = document.getElementById('loadingScreen');
+      var splash = document.getElementById('splashScreen');
+      if (ls) { ls.style.cssText = 'display:none;opacity:0;visibility:hidden;position:fixed;inset:0;'; }
+      if (splash) { splash.style.cssText = 'display:none;opacity:0;visibility:hidden;position:fixed;inset:0;'; }
+    });
+    // Also hide on load event as a safety net
     window.addEventListener('load', function() {
-      setTimeout(function() {
-        // Force-hide both overlays immediately
-        var ls = document.getElementById('loadingScreen');
-        var splash = document.getElementById('splashScreen');
-        if (ls) { ls.style.opacity = '0'; ls.style.display = 'none'; }
-        if (splash) { splash.style.display = 'none'; }
-      }, 400);
+      var ls = document.getElementById('loadingScreen');
+      var splash = document.getElementById('splashScreen');
+      if (ls) { ls.style.display = 'none'; ls.style.opacity = '0'; }
+      if (splash) { splash.style.display = 'none'; splash.style.opacity = '0'; }
     });
   </script>
 </body>

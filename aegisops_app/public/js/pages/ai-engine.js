@@ -22,6 +22,10 @@ async function renderAIEngine(container) {
   const localModels = status.ollama?.models || [];
   const allModels = status.allModels || [];
   const hasCloud = cloudEndpoints.length > 0;
+  const ollamaCloudConfigured = status.ollamaCloud?.configured || false;
+  const ollamaCloudOnline = status.ollamaCloud?.online || false;
+  const ollamaCloudModels = status.ollamaCloud?.models || [];
+  const ollamaCloudAvailable = status.ollamaCloud?.available || [];
 
   container.innerHTML = `
     <div class="page-header">
@@ -40,9 +44,14 @@ async function renderAIEngine(container) {
         <div class="stat-change">${ollamaInstalled ? 'Установлен' : 'Не установлен'} | Моделей: ${localModels.length}</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">Ollama Cloud</div>
+        <div class="stat-label">Ollama Cloud (Удалённый)</div>
         <div class="stat-value" style="color:${hasCloud ? '#23c483' : '#ffb347'}">${hasCloud ? '🟢 Подключен' : '🟡 Не настроен'}</div>
         <div class="stat-change">Эндпоинтов: ${cloudEndpoints.length} | Моделей: ${cloudModels.length}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">☁️ Ollama Cloud (Official)</div>
+        <div class="stat-value" style="color:${ollamaCloudOnline ? '#23c483' : ollamaCloudConfigured ? '#ffb347' : '#ff6a6a'}">${ollamaCloudOnline ? '🟢 Онлайн' : ollamaCloudConfigured ? '🟡 Ключ установлен' : '🔴 Не настроен'}</div>
+        <div class="stat-change">${ollamaCloudConfigured ? 'API ключ установлен' : 'Нужен API ключ'} | Моделей: ${ollamaCloudModels.length}</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">OpenClaw (MCP)</div>
@@ -127,9 +136,76 @@ async function renderAIEngine(container) {
           `).join('')}
         </div>
       </div>
-    </div>
 
-    <!-- Model Selection -->
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">🌐 Ollama Cloud (Official — ollama.com)</div>
+            <div class="card-subtitle">Официальный облачный сервис Ollama — модели до 671B параметров без мощного GPU</div>
+          </div>
+          <div class="item-actions">
+            ${ollamaCloudConfigured
+              ? `<span class="badge ${ollamaCloudOnline ? 'badge-success' : 'badge-warning'}">${ollamaCloudOnline ? '✅ Онлайн' : '⚠️ Оффлайн'}</span>`
+              : ''
+            }
+          </div>
+        </div>
+        <div class="item-list mt-16">
+          <div class="item-row">
+            <div class="item-info">
+              <div class="item-name">Ollama Cloud API</div>
+              <div class="item-meta">
+                <span class="chip font-mono">https://ollama.com</span>
+                ${ollamaCloudConfigured
+                  ? '<span class="badge badge-success">API ключ установлен</span>'
+                  : '<span class="badge badge-neutral">Требуется API ключ</span>'
+                }
+              </div>
+            </div>
+            <div class="item-actions">
+              <button class="btn btn-sm btn-primary" id="btnConfigOllamaCloud">⚙️ Настроить</button>
+              <button class="btn btn-sm" id="btnOllamaSignin">🔑 Ollama Signin</button>
+            </div>
+          </div>
+          <div class="item-row">
+            <div class="item-info">
+              <div class="item-name">Доступные облачные модели</div>
+              <div class="item-meta">
+                <span class="chip">gpt-oss:120b-cloud</span>
+                <span class="chip">llama3.3:70b-cloud</span>
+                <span class="chip">deepseek-r1:671b-cloud</span>
+              </div>
+            </div>
+          </div>
+          <div style="padding:12px;background:${ollamaCloudOnline ? '#0d1f12' : '#1a1510'};border-radius:12px;border:1px solid ${ollamaCloudOnline ? '#1a3a20' : '#3a2a10'};font-size:13px;color:${ollamaCloudOnline ? '#8ecf9a' : '#cfaa5a'}">
+            ${ollamaCloudOnline
+              ? '✅ Ollama Cloud подключен! Облачные модели доступны в селекторе моделей. Запускайте модели до 671B параметров без GPU.'
+              : '💡 Для подключения к Ollama Cloud получите API ключ на <a href="https://ollama.com" target="_blank" style="color:#59a8ff">ollama.com</a> или выполните <code style="background:#0b1220;padding:2px 6px;border-radius:4px">ollama signin</code> в терминале.'
+            }
+          </div>
+        </div>
+        ${ollamaCloudAvailable.length > 0 ? `
+          <div class="grid-auto mt-16">
+            ${ollamaCloudAvailable.map(m => `
+              <div class="module-card" style="padding:16px">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                  <span style="font-size:20px">${m.recommended ? '⭐' : '☁️'}</span>
+                  <span style="font-weight:600;font-size:13px">${escapeHtml(m.name)}</span>
+                </div>
+                <p style="font-size:12px;color:#8ea1c9;margin-bottom:8px">${escapeHtml(m.desc)}</p>
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span class="chip">${m.size}</span>
+                  ${m.available
+                    ? `<button class="btn btn-sm btn-primary select-model" data-model="${escapeHtml(m.name)}" data-provider="ollama-cloud">☁️ Использовать</button>`
+                    : '<span class="badge badge-neutral">Нужен API ключ</span>'
+                  }
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
+      </div>
+    </div>
     <div class="card mb-24">
       <div class="card-header">
         <div>
@@ -154,6 +230,15 @@ async function renderAIEngine(container) {
                 `<option value="${escapeHtml(m.name)}" data-provider="cloud" ${m.name === status.activeModel && status.activeProvider === 'cloud' ? 'selected' : ''}>☁️ ${escapeHtml(m.name)} (${m.parameterSize || m.family || '?'}) — ${escapeHtml(m.endpointName || 'cloud')}</option>`
               ).join('')}
               ${cloudModels.length === 0 ? '<option value="" disabled>Нет облачных моделей — добавьте эндпоинт</option>' : ''}
+            </optgroup>
+            <optgroup label="🌐 Ollama Cloud (Official)">
+              ${ollamaCloudModels.map(m =>
+                `<option value="${escapeHtml(m.name)}" data-provider="ollama-cloud" ${m.name === status.activeModel && status.activeProvider === 'ollama-cloud' ? 'selected' : ''}>🌐 ${escapeHtml(m.name)} (${m.parameterSize || m.family || 'Cloud'})</option>`
+              ).join('')}
+              ${ollamaCloudAvailable.filter(m => m.available && !ollamaCloudModels.find(om => om.name === m.name)).map(m =>
+                `<option value="${escapeHtml(m.name)}" data-provider="ollama-cloud">🌐 ${escapeHtml(m.name)} (${m.size})</option>`
+              ).join('')}
+              ${!ollamaCloudOnline ? '<option value="" disabled>Настройте API ключ для Ollama Cloud</option>' : ''}
             </optgroup>
           </select>
           <button class="btn btn-primary" id="btnSelectModel">Применить</button>
@@ -353,6 +438,84 @@ async function renderAIEngine(container) {
       await renderAIEngine(container);
     } catch (err) {
       showToast('Ошибка установки: ' + err.message, 'error');
+    }
+  });
+
+  // Ollama Cloud configuration
+  $('btnConfigOllamaCloud')?.addEventListener('click', () => {
+    showModal('🌐 Настройка Ollama Cloud', `
+      <div style="padding:12px;background:#0d1525;border-radius:12px;border:1px solid #1a2540;font-size:13px;color:#8ea1c9;margin-bottom:16px;line-height:1.6">
+        <strong>Ollama Cloud</strong> — официальный облачный сервис Ollama. Позволяет запускать модели до 671B параметров без мощного GPU.<br><br>
+        <strong>Как получить API ключ:</strong><br>
+        1. Зарегистрируйтесь на <a href="https://ollama.com" target="_blank" style="color:#59a8ff">ollama.com</a><br>
+        2. Создайте API ключ в настройках аккаунта<br>
+        3. Вставьте ключ ниже или выполните <code style="background:#0b1220;padding:2px 6px;border-radius:4px">ollama signin</code> в терминале
+      </div>
+      <div class="form-group">
+        <label class="form-label">Ollama Cloud API Key</label>
+        <input class="form-input" id="ollamaCloudApiKey" type="password" placeholder="Введите API ключ от ollama.com">
+      </div>
+      <div style="margin-top:12px">
+        <button class="btn" id="btnTestOllamaCloudKey" style="margin-right:8px">🔍 Тест ключа</button>
+        <span id="ollamaCloudTestResult" style="font-size:13px"></span>
+      </div>
+    `, `
+      <button class="btn" onclick="hideModal()">Отмена</button>
+      <button class="btn btn-primary" id="btnSaveOllamaCloudKey">Сохранить и подключить</button>
+    `);
+
+    $('btnTestOllamaCloudKey')?.addEventListener('click', async () => {
+      const apiKey = $('ollamaCloudApiKey')?.value;
+      if (!apiKey) return showToast('Введите API ключ', 'warning');
+      $('btnTestOllamaCloudKey').disabled = true;
+      $('btnTestOllamaCloudKey').textContent = '⏳ Тест...';
+      try {
+        const result = await api('/api/ai/ollama-cloud/test', {
+          method: 'POST',
+          body: JSON.stringify({ apiKey }),
+        });
+        const resultEl = $('ollamaCloudTestResult');
+        if (result.status === 'online') {
+          resultEl.innerHTML = `<span style="color:#23c483">✅ Ключ действителен! Моделей: ${result.modelCount || result.models?.length || 0}</span>`;
+        } else {
+          resultEl.innerHTML = `<span style="color:#ff6a6a">❌ Ошибка: ${escapeHtml(result.error || 'неверный ключ')}</span>`;
+        }
+      } catch (err) {
+        $('ollamaCloudTestResult').innerHTML = `<span style="color:#ff6a6a">❌ ${escapeHtml(err.message)}</span>`;
+      } finally {
+        $('btnTestOllamaCloudKey').disabled = false;
+        $('btnTestOllamaCloudKey').textContent = '🔍 Тест ключа';
+      }
+    });
+
+    $('btnSaveOllamaCloudKey')?.addEventListener('click', async () => {
+      const apiKey = $('ollamaCloudApiKey')?.value;
+      if (!apiKey) return showToast('Введите API ключ', 'warning');
+      try {
+        const result = await api('/api/ai/ollama-cloud/configure', {
+          method: 'POST',
+          body: JSON.stringify({ apiKey }),
+        });
+        if (result.configured) {
+          hideModal();
+          showToast('Ollama Cloud подключен! Доступно моделей: ' + (result.modelCount || 0), 'success');
+          await renderAIEngine(container);
+        } else {
+          showToast('Ошибка: ' + (result.error || 'неверный ключ'), 'error');
+        }
+      } catch (err) {
+        showToast('Ошибка: ' + err.message, 'error');
+      }
+    });
+  });
+
+  $('btnOllamaSignin')?.addEventListener('click', async () => {
+    showToast('Запуск ollama signin... Откройте терминал если появится окно авторизации', 'info');
+    try {
+      await api('/api/ai/ollama-cloud/signin', { method: 'POST' });
+      showToast('Ollama signin завершен', 'success');
+    } catch (err) {
+      showToast('Ollama signin: ' + err.message, 'warning');
     }
   });
 

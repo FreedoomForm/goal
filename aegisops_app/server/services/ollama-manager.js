@@ -1,7 +1,13 @@
 /**
  * AegisOps — Ollama Manager
- * Управление локальными и облачными LLM моделями через Ollama API
- * Supports both local Ollama (http://localhost:11434) and cloud/remote Ollama endpoints
+ * Управление локальными, облачными (удалёнными) и Ollama Cloud моделями.
+ *
+ * Three modes:
+ * 1. Local:    http://localhost:11434  (Ollama running on the same machine)
+ * 2. Cloud:    Any remote Ollama server (RunPod, Vast.ai, custom server)
+ * 3. Ollama Cloud: https://ollama.com  (Official Ollama Cloud — API key auth,
+ *              cloud models like gpt-oss:120b-cloud)
+ *
  * Uses Node.js built-in fetch (Node 18+)
  */
 const { queryOne, queryAll, runSQL } = require('../db');
@@ -10,8 +16,10 @@ class OllamaManager {
   constructor() {
     this._baseUrl = 'http://localhost:11434';
     this._activeModel = 'qwen2.5:7b-instruct';
-    this._activeProvider = 'local'; // 'local' or 'cloud'
+    this._activeProvider = 'local'; // 'local', 'cloud', 'ollama-cloud'
     this._cloudEndpoints = []; // Cached cloud endpoints
+    this._ollamaCloudKey = ''; // Ollama Cloud API key
+    this._ollamaCloudUrl = 'https://ollama.com';
   }
 
   getBaseUrl() {
@@ -22,10 +30,31 @@ class OllamaManager {
    * Get the effective base URL based on active provider
    */
   getEffectiveBaseUrl() {
+    if (this._activeProvider === 'ollama-cloud') {
+      return this._ollamaCloudUrl;
+    }
     if (this._activeProvider === 'cloud' && this._cloudEndpoints.length > 0) {
-      return this._cloudEndpoints[0].url; // Use first cloud endpoint as primary
+      return this._cloudEndpoints[0].url;
     }
     return this._baseUrl;
+  }
+
+  /**
+   * Get auth headers for the current active provider
+   */
+  getAuthHeaders() {
+    const headers = { 'Content-Type': 'application/json' };
+    if (this._activeProvider === 'ollama-cloud' && this._ollamaCloudKey) {
+      headers['Authorization'] = `Bearer ${this._ollamaCloudKey}`;
+    } else if (this._activeProvider === 'cloud' && this._cloudEndpoints.length > 0) {
+      const ep = this._cloudEndpoints[0];
+      if (ep.auth_mode === 'bearer' && ep.config?.token) {
+        headers['Authorization'] = `Bearer ${ep.config.token}`;
+      } else if (ep.auth_mode === 'token' && ep.config?.apiKey) {
+        headers['Authorization'] = `Bearer ${ep.config.apiKey}`;
+      }
+    }
+    return headers;
   }
 
   async refreshBaseUrl() {
@@ -56,6 +85,26 @@ class OllamaManager {
     return this._cloudEndpoints;
   }
 
+  /**
+   * Load Ollama Cloud API key from settings/connectors
+   */
+  async loadOllamaCloudKey() {
+    try {
+      // Check for a connector entry for ollama.com cloud
+      const row = await queryOne("SELECT * FROM connectors WHERE type='ollama_cloud' AND base_url LIKE '%ollama.com%' LIMIT 1");
+      if (row) {
+        const config = typeof row.config === 'string' ? JSON.parse(row.config || '{}') : (row.config || {});
+        this._ollamaCloudKey = config.apiKey || config.token || '';
+      }
+      // Also check settings table
+      if (!this._ollamaCloudKey) {
+        const setting = await queryOne("SELECT value FROM settings WHERE key = 'ollama_cloud_api_key'");
+        if (setting?.value) this._ollamaCloudKey = setting.value;
+      }
+    } catch {}
+    return this._ollamaCloudKey;
+  }
+
   getActiveModel() {
     return this._activeModel;
   }
@@ -67,14 +116,18 @@ class OllamaManager {
   setModel(model, provider) {
     if (!model) return;
     this._activeModel = model;
-    if (provider === 'cloud' || provider === 'local') {
+    if (provider === 'cloud' || provider === 'local' || provider === 'ollama-cloud') {
       this._activeProvider = provider;
     }
   }
 
+  setOllamaCloudKey(apiKey) {
+    this._ollamaCloudKey = apiKey;
+    this._activeProvider = 'ollama-cloud';
+  }
+
   setCloudProvider(cloudUrl) {
     this._activeProvider = 'cloud';
-    // Find matching cloud endpoint
     const endpoint = this._cloudEndpoints.find(e => e.url === cloudUrl);
     if (endpoint) {
       this._baseUrl = endpoint.url;
@@ -87,7 +140,7 @@ class OllamaManager {
   }
 
   async listModels() {
-    const results = { local: [], cloud: [] };
+    const results = { local: [], cloud: [], ollamaCloud: [] };
 
     // Local models
     try {
@@ -104,7 +157,7 @@ class OllamaManager {
       }));
     } catch {}
 
-    // Cloud models
+    // Cloud models (remote Ollama endpoints)
     await this.loadCloudEndpoints();
     for (const endpoint of this._cloudEndpoints) {
       try {
@@ -135,13 +188,38 @@ class OllamaManager {
       } catch {}
     }
 
+    // Ollama Cloud models (ollama.com)
+    await this.loadOllamaCloudKey();
+    if (this._ollamaCloudKey) {
+      try {
+        const res = await fetch(`${this._ollamaCloudUrl}/api/tags`, {
+          headers: { 'Authorization': `Bearer ${this._ollamaCloudKey}` },
+          signal: AbortSignal.timeout(8000),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          results.ollamaCloud = (data.models || []).map(m => ({
+            name: m.name,
+            size: m.size,
+            family: m.details?.family || '',
+            parameterSize: m.details?.parameter_size || '',
+            modified_at: m.modified_at,
+            provider: 'ollama-cloud',
+            endpointName: 'Ollama Cloud',
+            endpointUrl: this._ollamaCloudUrl,
+          }));
+        }
+      } catch {}
+    }
+
     return results;
   }
 
   async isOnline() {
     const baseUrl = this.getEffectiveBaseUrl();
+    const headers = this.getAuthHeaders();
     try {
-      const res = await fetch(baseUrl, { signal: AbortSignal.timeout(3000) });
+      const res = await fetch(`${baseUrl}/api/tags`, { headers, signal: AbortSignal.timeout(5000) });
       return res.ok;
     } catch (_) {
       return false;
@@ -151,6 +229,20 @@ class OllamaManager {
   async isLocalOnline() {
     try {
       const res = await fetch(`${this._baseUrl}/api/tags`, { signal: AbortSignal.timeout(3000) });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  async isOllamaCloudOnline() {
+    await this.loadOllamaCloudKey();
+    if (!this._ollamaCloudKey) return false;
+    try {
+      const res = await fetch(`${this._ollamaCloudUrl}/api/tags`, {
+        headers: { 'Authorization': `Bearer ${this._ollamaCloudKey}` },
+        signal: AbortSignal.timeout(5000),
+      });
       return res.ok;
     } catch {
       return false;
@@ -173,27 +265,25 @@ class OllamaManager {
 
   async pullModel(modelName) {
     const baseUrl = this.getEffectiveBaseUrl();
-    // Fire and forget — pull runs in background
+    const headers = this.getAuthHeaders();
     fetch(`${baseUrl}/api/pull`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ name: modelName, stream: false }),
     }).catch(() => {});
   }
 
   async deleteModel(modelName) {
     const baseUrl = this.getEffectiveBaseUrl();
+    const headers = this.getAuthHeaders();
     const res = await fetch(`${baseUrl}/api/delete`, {
       method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ name: modelName }),
     });
     if (!res.ok) throw new Error(`Failed to delete model: ${res.status}`);
   }
 
-  /**
-   * Add a cloud Ollama endpoint
-   */
   async addCloudEndpoint(name, url, authMode = 'none', config = {}) {
     const now = new Date().toISOString();
     const result = await runSQL(
@@ -204,17 +294,11 @@ class OllamaManager {
     return { id: result.lastID, name, url };
   }
 
-  /**
-   * Remove a cloud Ollama endpoint
-   */
   async removeCloudEndpoint(id) {
     await runSQL('DELETE FROM connectors WHERE id = ? AND type = ?', [id, 'ollama_cloud']);
     await this.loadCloudEndpoints();
   }
 
-  /**
-   * Test a cloud Ollama endpoint
-   */
   async testCloudEndpoint(url, authMode = 'none', config = {}) {
     try {
       const headers = { 'Content-Type': 'application/json' };
@@ -237,6 +321,67 @@ class OllamaManager {
       };
     } catch (err) {
       return { status: 'offline', error: err.message };
+    }
+  }
+
+  /**
+   * Test Ollama Cloud (ollama.com) with an API key
+   */
+  async testOllamaCloud(apiKey) {
+    try {
+      const res = await fetch(`${this._ollamaCloudUrl}/api/tags`, {
+        headers: { 'Authorization': `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) return { status: 'offline', error: `HTTP ${res.status}` };
+      const data = await res.json();
+      return {
+        status: 'online',
+        models: (data.models || []).map(m => m.name),
+        modelCount: (data.models || []).length,
+      };
+    } catch (err) {
+      return { status: 'offline', error: err.message };
+    }
+  }
+
+  /**
+   * Save Ollama Cloud API key to settings
+   */
+  async saveOllamaCloudKey(apiKey) {
+    this._ollamaCloudKey = apiKey;
+    try {
+      // Save to settings table
+      await runSQL(
+        'INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)',
+        ['ollama_cloud_api_key', apiKey, new Date().toISOString()]
+      );
+      // Also create/update a connector entry for ollama.com
+      const existing = await queryOne("SELECT id FROM connectors WHERE type='ollama_cloud' AND base_url LIKE '%ollama.com%' LIMIT 1");
+      if (existing) {
+        await runSQL('UPDATE connectors SET config = ?, updated_at = ? WHERE id = ?',
+          [JSON.stringify({ apiKey }), new Date().toISOString(), existing.id]);
+      } else {
+        const now = new Date().toISOString();
+        await runSQL(
+          'INSERT INTO connectors (name, type, base_url, auth_mode, config, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?)',
+          ['Ollama Cloud (Official)', 'ollama_cloud', 'https://ollama.com', 'bearer', JSON.stringify({ apiKey }), now, now]
+        );
+      }
+    } catch {}
+  }
+
+  /**
+   * Run ollama signin command (for Ollama Cloud)
+   */
+  async ollamaSignin() {
+    const { execSync } = require('child_process');
+    const isWin = process.platform === 'win32';
+    try {
+      execSync(isWin ? 'ollama signin' : 'ollama signin', { stdio: 'inherit', shell: isWin, timeout: 60000 });
+      return { status: 'ok' };
+    } catch (err) {
+      return { status: 'error', error: err.message };
     }
   }
 }

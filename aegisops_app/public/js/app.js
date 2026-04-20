@@ -1769,74 +1769,45 @@ async function renderSettings(container) {
 }
 
 /* ══════════════ INIT ══════════════ */
-/* ══════════════ Splash Screen — Auto-setup Ollama & OpenClaw ══════════════ */
+/* ══════════════ Splash Screen — DISABLED to prevent blur overlay bug ══════════════ */
+// The splash sequence was causing the "blur screen" bug on Windows Electron:
+// 1. runSplashSequence() sets splash.style.display = 'flex' (z-index 99998)
+// 2. The splash overlay covers everything, and race conditions with hideSplash()
+//    caused it to persist even after navigation to planning page.
+// 3. Now we skip the splash entirely and go straight to the dashboard.
 async function runSplashSequence() {
+  // Immediately force-hide all overlays — no splash animation
   const splash = $('splashScreen');
-  const steps = $('splashSteps');
-  const bar = $('splashProgressBar');
-  if (!splash || !steps || !bar) { hideLoadingScreen(); hideSplash(); return; }
+  const ls = $('loadingScreen');
+  if (splash) { splash.style.display = 'none'; splash.classList.add('hidden'); }
+  if (ls) { ls.style.display = 'none'; ls.style.opacity = '0'; }
+  window._splashDismissed = true;
 
-  // Make sure splash is visible
-  splash.style.display = 'flex';
-
-  // Safety: force hide splash after max 8 seconds no matter what
-  const safetyTimer = setTimeout(() => {
-    console.warn('[AegisOps] Splash safety timeout — forcing hide');
-    hideSplash();
-  }, 8000);
-
-  const setupSteps = [
-    { icon: '⏳', text: 'Подключение к серверу...', action: async () => { await Promise.race([api('/api/health').catch(() => {}), new Promise(r => setTimeout(r, 3000))]); } },
-    { icon: '🤖', text: 'Проверка Ollama...', action: async () => { try { await Promise.race([api('/api/ai/status'), new Promise(r => setTimeout(r, 2000))]); } catch {} } },
-    { icon: '📥', text: 'Настройка AI движка...', action: async () => { try { await Promise.race([api('/api/ai/ensure', { method: 'POST', body: '{}' }), new Promise(r => setTimeout(r, 2000))]); } catch {} } },
-    { icon: '🧩', text: 'Проверка OpenClaw (MCP)...', action: async () => { try { await Promise.race([api('/api/mcp/servers'), new Promise(r => setTimeout(r, 2000))]); } catch {} } },
-    { icon: '✅', text: 'Готово!', action: async () => { await new Promise(r => setTimeout(r, 300)); } },
-  ];
-
-  steps.innerHTML = setupSteps.map((s, i) =>
-    `<div class="splash-step" data-step="${i}"><span class="splash-step-icon">${s.icon}</span><span>${s.text}</span></div>`
-  ).join('');
-
-  for (let i = 0; i < setupSteps.length; i++) {
-    const stepEl = steps.querySelector(`[data-step="${i}"]`);
-    if (stepEl) { stepEl.classList.add('active'); stepEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
-    bar.style.width = `${((i + 0.5) / setupSteps.length) * 100}%`;
-
-    try { await setupSteps[i].action(); } catch {}
-
-    bar.style.width = `${((i + 1) / setupSteps.length) * 100}%`;
-    if (stepEl) { stepEl.classList.remove('active'); stepEl.classList.add('done'); }
-  }
-
-  clearTimeout(safetyTimer);
-
-  // Auto-hide after a short delay
-  setTimeout(hideSplash, 400);
+  // Run setup checks silently in background (no visual splash)
+  try { await Promise.race([api('/api/health').catch(() => {}), new Promise(r => setTimeout(r, 2000))]); } catch {}
+  try { await Promise.race([api('/api/ai/status').catch(() => {}), new Promise(r => setTimeout(r, 1500))]); } catch {}
+  try { await Promise.race([api('/api/mcp/servers').catch(() => {}), new Promise(r => setTimeout(r, 1500))]); } catch {}
 }
 
 function hideLoadingScreen() {
   const ls = $('loadingScreen');
-  if (ls && ls.style.display !== 'none') {
-    ls.style.opacity = '0';
-    setTimeout(() => { ls.style.display = 'none'; }, 500);
-  }
+  if (ls) { ls.style.opacity = '0'; ls.style.display = 'none'; ls.style.visibility = 'hidden'; }
 }
 
 function hideSplash() {
   // Mark splash as dismissed so the load handler in index.html won't re-show it
   window._splashDismissed = true;
 
-  // Hide both splash and loading screens
+  // Hide both splash and loading screens IMMEDIATELY (no transition delay)
   hideLoadingScreen();
   const splash = $('splashScreen');
   if (splash) {
+    splash.style.display = 'none';
+    splash.style.opacity = '0';
+    splash.style.visibility = 'hidden';
+    splash.classList.add('hidden');
     splash.classList.add('hiding');
     splash.classList.remove('visible');
-    // Immediately set display none after animation to prevent blur overlay lingering
-    setTimeout(() => {
-      splash.classList.add('hidden');
-      splash.style.display = 'none';
-    }, 600);
   }
 }
 
