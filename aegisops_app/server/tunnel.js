@@ -8,11 +8,16 @@
  *   - QR code with ws://LAN_IP:PORT
  *
  * Optional fallback: cloud tunnels (cloudflared / ngrok / manual)
- *   - cloudflared (no account required for quick tunnels)
+ *   - cloudflared (auto-downloaded if missing, no account required)
  *   - ngrok (if NGROK_AUTHTOKEN is set)
  *   - manual (user-provided public URL)
  */
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
+const path = require('path');
+const fs = require('fs');
+const https = require('https');
+const http = require('http');
+const os = require('os');
 const { log } = require('./middleware/logger');
 const { runSQL, queryOne, nowISO } = require('./db');
 const { gateway, getLanIPs, generatePairingCode } = require('./gateway');
@@ -59,18 +64,114 @@ function getGatewayStatus() {
   return gateway.getStatus();
 }
 
+/* ─── cloudflared auto-download ─── */
+
+/**
+ * Resolve the cloudflared binary path.
+ * 1. Check if 'cloudflared' / 'cloudflared.exe' is on PATH
+ * 2. Check the local data/bin directory
+ * 3. Auto-download to data/bin if missing
+ */
+async function ensureCloudflared() {
+  const isWin = process.platform === 'win32';
+  const binName = isWin ? 'cloudflared.exe' : 'cloudflared';
+
+  // 1. Check PATH
+  try {
+    const whichCmd = isWin ? 'where' : 'which';
+    const result = execSync(`${whichCmd} ${binName}`, { encoding: 'utf-8', timeout: 5000 }).trim();
+    if (result) {
+      log.info('tunnel.cloudflared_found_in_path', { path: result.split('\n')[0] });
+      return result.split('\n')[0];
+    }
+  } catch {}
+
+  // 2. Check local data/bin directory
+  const dataDir = path.join(__dirname, '..', 'data');
+  const binDir = path.join(dataDir, 'bin');
+  const localBin = path.join(binDir, binName);
+  if (fs.existsSync(localBin)) {
+    if (!isWin) {
+      try { fs.chmodSync(localBin, 0o755); } catch {}
+    }
+    log.info('tunnel.cloudflared_found_local', { path: localBin });
+    return localBin;
+  }
+
+  // 3. Auto-download
+  log.info('tunnel.cloudflared_downloading', { platform: process.platform, arch: process.arch });
+  const archMap = { x64: 'amd64', arm64: 'arm64', ia32: '386', arm: 'arm' };
+  const cfArch = archMap[process.arch] || 'amd64';
+
+  let downloadUrl;
+  if (isWin) {
+    downloadUrl = `https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-${cfArch}.exe`;
+  } else if (process.platform === 'darwin') {
+    downloadUrl = `https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-${cfArch}`;
+  } else {
+    downloadUrl = `https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${cfArch}`;
+  }
+
+  try {
+    if (!fs.existsSync(binDir)) fs.mkdirSync(binDir, { recursive: true });
+    await downloadFile(downloadUrl, localBin);
+    if (!isWin) {
+      try { fs.chmodSync(localBin, 0o755); } catch {}
+    }
+    log.info('tunnel.cloudflared_downloaded', { path: localBin });
+    return localBin;
+  } catch (err) {
+    log.warn('tunnel.cloudflared_download_failed', { error: err.message });
+    throw new Error(
+      `cloudflared not found and auto-download failed: ${err.message}. ` +
+      `Install manually from https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/`
+    );
+  }
+}
+
+/**
+ * Download a file from URL to local path using streaming.
+ */
+function downloadFile(url, dest) {
+  return new Promise((resolve, reject) => {
+    const follow = (url, redirects = 0) => {
+      if (redirects > 10) return reject(new Error('Too many redirects'));
+      const mod = url.startsWith('https') ? https : http;
+      mod.get(url, { timeout: 120_000 }, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          return follow(res.headers.location, redirects + 1);
+        }
+        if (res.statusCode !== 200) {
+          return reject(new Error(`HTTP ${res.statusCode} downloading ${url}`));
+        }
+        const stream = fs.createWriteStream(dest);
+        res.pipe(stream);
+        stream.on('finish', () => {
+          stream.close();
+          resolve();
+        });
+        stream.on('error', reject);
+        res.on('error', reject);
+      }).on('error', reject);
+    };
+    follow(url);
+  });
+}
+
 /* ─── Cloudflare/ngrok tunnels (optional fallback) ─── */
 
 async function startCloudflared(port) {
+  // Ensure cloudflared binary is available (auto-download if missing)
+  const cloudflaredPath = await ensureCloudflared();
+
   return new Promise((resolve, reject) => {
-    const cmd = process.platform === 'win32' ? 'cloudflared.exe' : 'cloudflared';
     let proc;
     try {
-      proc = spawn(cmd, ['tunnel', '--url', `http://127.0.0.1:${port}`, '--no-autoupdate'], {
+      proc = spawn(cloudflaredPath, ['tunnel', '--url', `http://127.0.0.1:${port}`, '--no-autoupdate'], {
         stdio: ['ignore', 'pipe', 'pipe'],
       });
     } catch (err) {
-      return reject(new Error(`Failed to start cloudflared: ${err.message}. Make sure cloudflared is installed and in PATH.`));
+      return reject(new Error(`Failed to start cloudflared: ${err.message}`));
     }
 
     let settled = false;
@@ -79,7 +180,7 @@ async function startCloudflared(port) {
       settled = true;
       err ? reject(err) : resolve(url);
     };
-    const t = setTimeout(() => settle(new Error('cloudflared timeout (30s). Is cloudflared installed and accessible?')), 30_000);
+    const t = setTimeout(() => settle(new Error('cloudflared timeout (30s). Check your internet connection.')), 30_000);
 
     const onData = buf => {
       const text = String(buf);
@@ -96,7 +197,7 @@ async function startCloudflared(port) {
     proc.stderr.on('data', onData);
     proc.on('error', err => {
       clearTimeout(t);
-      settle(new Error(`cloudflared binary not found or failed to start: ${err.message}. Install from https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/`));
+      settle(new Error(`cloudflared failed to start: ${err.message}`));
     });
     proc.on('exit', code => {
       log.info('tunnel.cloudflared_exit', { code });

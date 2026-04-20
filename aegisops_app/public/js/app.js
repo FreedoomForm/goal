@@ -1790,6 +1790,75 @@ window.addEventListener('DOMContentLoaded', () => {
     $('sidebar')?.classList.toggle('open');
   });
 
+  // Sidebar AI Chat Panel
+  const sidebarChatBtn = $('sidebarChatBtn');
+  const sidebarChatPanel = $('sidebarChatPanel');
+  const sidebarChatClose = $('sidebarChatClose');
+  const sidebarChatMessages = $('sidebarChatMessages');
+  const sidebarChatInput = $('sidebarChatInput');
+  const sidebarChatSend = $('sidebarChatSend');
+
+  if (sidebarChatBtn && sidebarChatPanel) {
+    sidebarChatBtn.addEventListener('click', () => {
+      sidebarChatPanel.classList.toggle('open');
+      if (sidebarChatPanel.classList.contains('open') && sidebarChatInput) {
+        setTimeout(() => sidebarChatInput.focus(), 300);
+      }
+    });
+    sidebarChatClose?.addEventListener('click', () => {
+      sidebarChatPanel.classList.remove('open');
+    });
+  }
+
+  // Sidebar chat send function
+  function sidebarChatSendMsg() {
+    const input = sidebarChatInput;
+    const msg = input?.value?.trim();
+    if (!msg) return;
+    input.value = '';
+
+    state.chatHistory.push({ role: 'user', content: msg });
+    sidebarChatMessages.innerHTML += renderChatMessage({ role: 'user', content: msg });
+    sidebarChatMessages.scrollTop = sidebarChatMessages.scrollHeight;
+
+    // Add AI thinking indicator
+    const thinkingId = 'think_' + Date.now();
+    sidebarChatMessages.innerHTML += `<div class="chat-message ai" id="${thinkingId}">
+      <div class="chat-avatar">🤖</div>
+      <div class="chat-bubble"><div class="streaming-dots"><span></span><span></span><span></span></div></div>
+    </div>`;
+    sidebarChatMessages.scrollTop = sidebarChatMessages.scrollHeight;
+
+    fetch('/api/assistant', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: msg }),
+    })
+    .then(r => r.ok ? r.json() : r.text().then(t => { throw new Error(t); }))
+    .then(result => {
+      const el = document.getElementById(thinkingId);
+      if (el) el.remove();
+
+      state.chatHistory.push({ role: 'ai', content: result.content, provider: result.provider, model: result.model });
+      sidebarChatMessages.innerHTML += renderChatMessage({ role: 'ai', content: result.content, provider: result.provider, model: result.model });
+      sidebarChatMessages.scrollTop = sidebarChatMessages.scrollHeight;
+    })
+    .catch(err => {
+      const el = document.getElementById(thinkingId);
+      if (el) el.remove();
+      sidebarChatMessages.innerHTML += renderChatMessage({ role: 'ai', content: 'Ошибка: ' + err.message, provider: 'error' });
+      sidebarChatMessages.scrollTop = sidebarChatMessages.scrollHeight;
+    });
+  }
+
+  sidebarChatSend?.addEventListener('click', sidebarChatSendMsg);
+  sidebarChatInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sidebarChatSendMsg();
+    }
+  });
+
   // Status indicator
   (async () => {
     try {

@@ -147,13 +147,32 @@
       </nav>
 
       <div class="sidebar-footer">
+        <button class="btn btn-primary sidebar-chat-btn" id="sidebarChatBtn" title="AI Чат">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+          <span>AI Чат</span>
+        </button>
         <div class="status-indicator" id="statusIndicator">
           <div class="status-dot"></div>
           <span>System Ready</span>
         </div>
-        <div class="version">v1.1.0</div>
+        <div class="version">v2.0.0</div>
       </div>
     </aside>
+
+    <!-- Sidebar AI Chat Panel -->
+    <div class="sidebar-chat-panel" id="sidebarChatPanel">
+      <div class="sidebar-chat-header">
+        <h3>💬 AI Ассистент</h3>
+        <button class="sidebar-chat-close" id="sidebarChatClose">✕</button>
+      </div>
+      <div class="sidebar-chat-messages" id="sidebarChatMessages">
+        <div style="text-align:center;color:#5e6c88;padding:40px 0">Задайте вопрос AI</div>
+      </div>
+      <div class="sidebar-chat-input">
+        <input class="form-input" id="sidebarChatInput" placeholder="Введите сообщение..." />
+        <button class="btn btn-primary btn-sm" id="sidebarChatSend">➤</button>
+      </div>
+    </div>
 
     <!-- Main Content -->
     <main class="main" id="mainContent">

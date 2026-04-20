@@ -1165,7 +1165,7 @@ ${trainingData ? `# Training context\n# ${trainingData.split('\n').length} lines
 }
 
 /* ────────── Start server ────────── */
-async function startServer(port = 18090, { bind = '127.0.0.1', dataDir } = {}) {
+async function startServer(port = 18090, { bind = '0.0.0.0', dataDir } = {}) {
   if (dataDir) {
     _dataDir = dataDir;
     REPORTS_DIR = path.join(_dataDir, 'generated_reports');
