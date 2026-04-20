@@ -1,5 +1,6 @@
 /**
  * Routes: /api/mcp/*  — manage real Model Context Protocol servers.
+ * Updated to use async db/pg.js — all DB calls use await.
  */
 const express = require('express');
 const { startPreset, stop, callTool, listPresets, registry } = require('../mcp/openclaw-bridge');
@@ -11,8 +12,8 @@ const router = express.Router();
 
 router.get('/presets', (req, res) => res.json(listPresets()));
 
-router.get('/servers', (req, res) => {
-  const persisted = queryAll('SELECT * FROM mcp_servers ORDER BY id')
+router.get('/servers', async (req, res) => {
+  const persisted = (await queryAll('SELECT * FROM mcp_servers ORDER BY id'))
     .map(r => ({ ...r, config: safe(r.config, {}) }));
   const running = registry.list();
   res.json({ persisted, running });
@@ -22,12 +23,12 @@ router.post('/servers', authMiddleware({ scopes: ['*'] }), async (req, res) => {
   const { name, preset, config, auto_start } = req.body || {};
   if (!name || !preset) return res.status(400).json({ error: 'name and preset required' });
   const ts = nowISO();
-  const existing = queryOne('SELECT id FROM mcp_servers WHERE name=?', [name]);
+  const existing = await queryOne('SELECT id FROM mcp_servers WHERE name=?', [name]);
   if (existing) {
-    runSQL('UPDATE mcp_servers SET preset=?, config=?, auto_start=?, updated_at=? WHERE id=?',
+    await runSQL('UPDATE mcp_servers SET preset=?, config=?, auto_start=?, updated_at=? WHERE id=?',
       [preset, JSON.stringify(config || {}), auto_start ? 1 : 0, ts, existing.id]);
   } else {
-    runSQL('INSERT INTO mcp_servers (name, preset, config, auto_start, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+    await runSQL('INSERT INTO mcp_servers (name, preset, config, auto_start, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
       [name, preset, JSON.stringify(config || {}), auto_start ? 1 : 0, ts, ts]);
   }
   log.info('mcp.saved', { name, preset });
@@ -35,7 +36,7 @@ router.post('/servers', authMiddleware({ scopes: ['*'] }), async (req, res) => {
 });
 
 router.post('/servers/:name/start', authMiddleware({ scopes: ['*'] }), async (req, res) => {
-  const row = queryOne('SELECT * FROM mcp_servers WHERE name=?', [req.params.name]);
+  const row = await queryOne('SELECT * FROM mcp_servers WHERE name=?', [req.params.name]);
   if (!row) return res.status(404).json({ error: 'not found' });
   try {
     const result = await startPreset(row.name, row.preset, safe(row.config, {}));
@@ -45,14 +46,14 @@ router.post('/servers/:name/start', authMiddleware({ scopes: ['*'] }), async (re
   }
 });
 
-router.post('/servers/:name/stop', authMiddleware({ scopes: ['*'] }), (req, res) => {
+router.post('/servers/:name/stop', authMiddleware({ scopes: ['*'] }), async (req, res) => {
   stop(req.params.name);
   res.json({ ok: true });
 });
 
-router.delete('/servers/:name', authMiddleware({ scopes: ['*'] }), (req, res) => {
+router.delete('/servers/:name', authMiddleware({ scopes: ['*'] }), async (req, res) => {
   stop(req.params.name);
-  runSQL('DELETE FROM mcp_servers WHERE name=?', [req.params.name]);
+  await runSQL('DELETE FROM mcp_servers WHERE name=?', [req.params.name]);
   res.json({ ok: true });
 });
 
@@ -71,7 +72,7 @@ function safe(s, fb) { try { return typeof s === 'string' ? JSON.parse(s) : s; }
 
 /* Auto-start persisted servers on boot */
 async function autoStartPersisted() {
-  const rows = queryAll('SELECT * FROM mcp_servers WHERE auto_start=1');
+  const rows = await queryAll('SELECT * FROM mcp_servers WHERE auto_start=1');
   for (const r of rows) {
     try {
       await startPreset(r.name, r.preset, safe(r.config, {}));

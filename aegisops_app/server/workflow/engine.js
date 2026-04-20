@@ -12,6 +12,8 @@
  *   - output.report (HTML report generation)
  *   - output.telegram (send via Telegram connector)
  *   - output.webhook (POST to URL)
+ *
+ * All database calls use the async PostgreSQL/TimescaleDB layer (db/pg).
  */
 const { queryOne, queryAll, runSQL, nowISO } = require('../db');
 const { createConnector } = require('../connectors');
@@ -34,14 +36,14 @@ async function runNode(node, inbound, ctx) {
       return { output: ctx.triggerPayload || {} };
 
     case 'connector.test': {
-      const row = queryOne('SELECT * FROM connectors WHERE id=?', [node.params.connector_id]);
+      const row = await queryOne('SELECT * FROM connectors WHERE id=?', [node.params.connector_id]);
       if (!row) throw new Error(`connector ${node.params.connector_id} not found`);
       const c = createConnector(row);
       return { output: await c.testConnection() };
     }
 
     case 'connector.fetch': {
-      const row = queryOne('SELECT * FROM connectors WHERE id=?', [node.params.connector_id]);
+      const row = await queryOne('SELECT * FROM connectors WHERE id=?', [node.params.connector_id]);
       if (!row) throw new Error(`connector ${node.params.connector_id} not found`);
       const c = createConnector(row);
       return { output: await c.fetchData(node.params.query || {}) };
@@ -51,7 +53,7 @@ async function runNode(node, inbound, ctx) {
       const prompt = node.params.prompt_template
         ? interpolate(node.params.prompt_template, { input, ctx })
         : (node.params.prompt || String(input ?? ''));
-      const ollamaRow = queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
+      const ollamaRow = await queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
       if (!ollamaRow) throw new Error('no ollama connector configured');
       const c = createConnector(ollamaRow);
       return { output: await c.chat([
@@ -89,7 +91,7 @@ async function runNode(node, inbound, ctx) {
     }
 
     case 'output.telegram': {
-      const row = queryOne("SELECT * FROM connectors WHERE type='telegram' LIMIT 1");
+      const row = await queryOne("SELECT * FROM connectors WHERE type='telegram' LIMIT 1");
       if (!row) throw new Error('telegram connector not configured');
       const c = createConnector(row);
       const text = interpolate(node.params.text || String(input ?? ''), { input, ctx });
@@ -168,58 +170,58 @@ function safePreview(value) {
   } catch { return ''; }
 }
 
-/* Persistence helpers */
-function saveWorkflow({ id, name, description, graph, cron_expr, enabled = true }) {
+/* Persistence helpers — all async because db/pg is async */
+async function saveWorkflow({ id, name, description, graph, cron_expr, enabled = true }) {
   const ts = nowISO();
   if (id) {
-    runSQL('UPDATE workflows SET name=?, description=?, graph=?, cron_expr=?, enabled=?, updated_at=? WHERE id=?',
+    await runSQL('UPDATE workflows SET name=?, description=?, graph=?, cron_expr=?, enabled=?, updated_at=? WHERE id=?',
       [name, description || '', JSON.stringify(graph), cron_expr || '', enabled ? 1 : 0, ts, id]);
-    return queryOne('SELECT * FROM workflows WHERE id=?', [id]);
+    return await queryOne('SELECT * FROM workflows WHERE id=?', [id]);
   }
-  const r = runSQL(`INSERT INTO workflows (name, description, graph, cron_expr, enabled, created_at, updated_at)
+  const r = await runSQL(`INSERT INTO workflows (name, description, graph, cron_expr, enabled, created_at, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?)`,
     [name, description || '', JSON.stringify(graph), cron_expr || '', enabled ? 1 : 0, ts, ts]);
-  return queryOne('SELECT * FROM workflows WHERE id=?', [r.lastInsertRowid]);
+  return await queryOne('SELECT * FROM workflows WHERE id=?', [r.lastInsertRowid]);
 }
 
-function listWorkflows() {
-  return queryAll('SELECT * FROM workflows ORDER BY id DESC')
-    .map(r => ({ ...r, graph: safeJSON(r.graph, { nodes: [], edges: [] }) }));
+async function listWorkflows() {
+  const rows = await queryAll('SELECT * FROM workflows ORDER BY id DESC');
+  return rows.map(r => ({ ...r, graph: safeJSON(r.graph, { nodes: [], edges: [] }) }));
 }
 
-function getWorkflow(id) {
-  const r = queryOne('SELECT * FROM workflows WHERE id=?', [id]);
+async function getWorkflow(id) {
+  const r = await queryOne('SELECT * FROM workflows WHERE id=?', [id]);
   if (!r) return null;
   return { ...r, graph: safeJSON(r.graph, { nodes: [], edges: [] }) };
 }
 
-function deleteWorkflow(id) {
-  runSQL('DELETE FROM workflows WHERE id=?', [id]);
-  runSQL('DELETE FROM workflow_runs WHERE workflow_id=?', [id]);
+async function deleteWorkflow(id) {
+  await runSQL('DELETE FROM workflows WHERE id=?', [id]);
+  await runSQL('DELETE FROM workflow_runs WHERE workflow_id=?', [id]);
 }
 
 async function runWorkflow(id, triggerPayload = {}) {
-  const wf = getWorkflow(id);
+  const wf = await getWorkflow(id);
   if (!wf) throw new Error('workflow not found');
   const runStart = nowISO();
-  const r = runSQL('INSERT INTO workflow_runs (workflow_id, status, trace, started_at) VALUES (?, ?, ?, ?)',
+  const r = await runSQL('INSERT INTO workflow_runs (workflow_id, status, trace, started_at) VALUES (?, ?, ?, ?)',
     [id, 'running', '[]', runStart]);
   const runId = r.lastInsertRowid;
   try {
     const result = await executeGraph(wf.graph, { triggerPayload });
-    runSQL('UPDATE workflow_runs SET status=?, trace=?, finished_at=? WHERE id=?',
+    await runSQL('UPDATE workflow_runs SET status=?, trace=?, finished_at=? WHERE id=?',
       ['completed', JSON.stringify(result.trace), nowISO(), runId]);
     return { run_id: runId, ...result };
   } catch (err) {
-    runSQL('UPDATE workflow_runs SET status=?, trace=?, finished_at=? WHERE id=?',
+    await runSQL('UPDATE workflow_runs SET status=?, trace=?, finished_at=? WHERE id=?',
       ['failed', JSON.stringify([{ error: err.message }]), nowISO(), runId]);
     throw err;
   }
 }
 
-function listRuns(workflowId) {
-  return queryAll('SELECT * FROM workflow_runs WHERE workflow_id=? ORDER BY id DESC LIMIT 50', [workflowId])
-    .map(r => ({ ...r, trace: safeJSON(r.trace, []) }));
+async function listRuns(workflowId) {
+  const rows = await queryAll('SELECT * FROM workflow_runs WHERE workflow_id=? ORDER BY id DESC LIMIT 50', [workflowId]);
+  return rows.map(r => ({ ...r, trace: safeJSON(r.trace, []) }));
 }
 
 function safeJSON(s, fallback) { try { return JSON.parse(s); } catch { return fallback; } }

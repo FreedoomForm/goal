@@ -578,7 +578,7 @@ async function runETLPipeline(pipelineId) {
  * Get ETL run history for a pipeline.
  */
 async function getETLRunLog(pipelineId, limit = 20) {
-  return queryAll('SELECT * FROM etl_run_log WHERE pipeline_id = ? ORDER BY id DESC LIMIT ?', [pipelineId, limit]);
+  return await queryAll('SELECT * FROM etl_run_log WHERE pipeline_id = ? ORDER BY id DESC LIMIT ?', [pipelineId, limit]);
 }
 
 /**

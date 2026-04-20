@@ -12,7 +12,7 @@ const router = express.Router();
 // AI Status
 router.get('/status', async (req, res) => {
   try {
-    const ollamaRow = queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
+    const ollamaRow = await queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
     let models = [];
     let activeModel = ollamaManager.getActiveModel();
     let ollamaOnline = false;

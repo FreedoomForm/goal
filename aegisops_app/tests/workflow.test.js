@@ -3,9 +3,9 @@
 
 jest.mock('../server/db', () => ({
   queryOne: jest.fn(),
-  queryAll: jest.fn(() => []),
-  runSQL: jest.fn(() => ({ lastInsertRowid: 1 })),
-  nowISO: () => '2026-01-01T00:00:00Z',
+  queryAll: jest.fn(() => Promise.resolve([])),
+  runSQL: jest.fn(() => Promise.resolve({ lastInsertRowid: 1 })),
+  nowISO: () => '2026-01-01 00:00:00',
   flushDB: jest.fn(),
 }));
 
@@ -41,8 +41,8 @@ test('catalog returns groups with items', () => {
 
 test('executeGraph runs topological order', async () => {
   db.queryOne.mockImplementation(sql => {
-    if (String(sql).includes("type='ollama'")) return { id: 1, type: 'ollama', base_url: '', auth_payload: '{}', config: '{}' };
-    return { id: 1, name: 'test', type: 'ollama' };
+    if (String(sql).includes("type='ollama'")) return Promise.resolve({ id: 1, type: 'ollama', base_url: '', auth_payload: '{}', config: '{}' });
+    return Promise.resolve({ id: 1, name: 'test', type: 'ollama' });
   });
   const graph = {
     nodes: [
@@ -74,7 +74,7 @@ test('filter node skips downstream', async () => {
 });
 
 test('ai.ask uses injected connector', async () => {
-  db.queryOne.mockReturnValue({ id: 1, type: 'ollama', base_url: '', auth_payload: '{}', config: '{}' });
+  db.queryOne.mockReturnValue(Promise.resolve({ id: 1, type: 'ollama', base_url: '', auth_payload: '{}', config: '{}' }));
   const graph = {
     nodes: [
       { id: 'a', type: 'trigger.manual', params: {} },

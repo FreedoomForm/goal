@@ -12,8 +12,12 @@ class OllamaManager {
   }
 
   getBaseUrl() {
+    return this._baseUrl;
+  }
+
+  async refreshBaseUrl() {
     try {
-      const row = queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
+      const row = await queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
       if (row?.base_url) this._baseUrl = row.base_url;
     } catch (_) {}
     return this._baseUrl;

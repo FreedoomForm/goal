@@ -55,7 +55,7 @@ async function runModule(code, params = {}) {
   }
 
   // Try to find an Ollama connector for AI-powered analysis
-  const ollamaRow = queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
+  const ollamaRow = await queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
   let analysis = null;
   let provider = 'fallback';
   let model = 'built-in';
