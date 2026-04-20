@@ -95,25 +95,27 @@ input, textarea, select { font: inherit; }
 .bg-glow {
   position: fixed;
   border-radius: 50%;
-  filter: blur(80px);
+  /* NOTE: Using radial-gradient instead of filter:blur() to avoid GPU rendering
+     issues on Windows Electron. filter:blur() causes blur/white artifacts
+     when combined with HiDPI scaling on some hardware. */
   pointer-events: none;
   z-index: 0;
   animation: glowFloat 20s ease-in-out infinite;
 }
 .bg-glow-1 {
   width: 500px; height: 500px;
-  background: rgba(89,168,255,0.08);
+  background: radial-gradient(circle, rgba(89,168,255,0.08), transparent 70%);
   top: -100px; left: -100px;
 }
 .bg-glow-2 {
   width: 400px; height: 400px;
-  background: rgba(124,92,255,0.06);
+  background: radial-gradient(circle, rgba(124,92,255,0.06), transparent 70%);
   bottom: -50px; right: -50px;
   animation-delay: -7s;
 }
 .bg-glow-3 {
   width: 300px; height: 300px;
-  background: rgba(0,212,255,0.04);
+  background: radial-gradient(circle, rgba(0,212,255,0.04), transparent 70%);
   top: 50%; left: 50%;
   transform: translate(-50%, -50%);
   animation-delay: -14s;

@@ -130,7 +130,21 @@
       mcpServers = mcpRes.persisted || [];
     } catch { mcpServers = []; }
 
-    const canvas = new window.WorkflowCanvas(document.getElementById('wfCanvas'), {
+    const canvasEl = document.getElementById('wfCanvas');
+
+    // Safety: ensure the canvas host element has a non-zero height.
+    // On some Windows Electron builds, CSS flex:1 inside a grid cell
+    // can compute to 0px height, making the canvas invisible.
+    if (canvasEl) {
+      const rect = canvasEl.getBoundingClientRect();
+      if (rect.height < 50) {
+        // Fallback: set explicit pixel height based on viewport
+        const fallbackH = Math.max(400, window.innerHeight - 260);
+        canvasEl.style.height = fallbackH + 'px';
+      }
+    }
+
+    const canvas = new window.WorkflowCanvas(canvasEl, {
       onChange: () => { /* autosave hook could go here */ },
       onOpenInspector: node => openInspector(node),
       onRunPreview: () => runCurrent(),
@@ -259,15 +273,17 @@
     // Guide
     document.getElementById('wfGuideBtn').onclick = () => window.WorkflowGuide.open();
 
-    // Seed starter graph if empty
-    if (canvas.nodes.size === 0) {
-      const trigger = canvas.addNode({ type: 'trigger.manual', label: 'Ручной запуск', icon: '▶️', x: 60, y: 80 });
-      const ai = canvas.addNode({ type: 'ai.ask', label: 'AI-запрос', icon: '🤖', params: { prompt_template: 'Сформируй ежедневную сводку по газовому балансу', system: 'Ты enterprise аналитик.' }, x: 340, y: 80 });
-      const out = canvas.addNode({ type: 'output.report', label: 'HTML отчёт', icon: '📄', params: { template: '<h1>Сводка</h1><pre>{{$input.content}}</pre>' }, x: 620, y: 80 });
-      canvas.addEdge(trigger.id, ai.id);
-      canvas.addEdge(ai.id, out.id);
-      canvas.fit();
-    }
+    // Seed starter graph if empty (deferred to ensure layout is settled)
+    requestAnimationFrame(() => {
+      if (canvas.nodes.size === 0) {
+        const trigger = canvas.addNode({ type: 'trigger.manual', label: 'Ручной запуск', icon: '▶️', x: 60, y: 80 });
+        const ai = canvas.addNode({ type: 'ai.ask', label: 'AI-запрос', icon: '🤖', params: { prompt_template: 'Сформируй ежедневную сводку по газовому балансу', system: 'Ты enterprise аналитик.' }, x: 340, y: 80 });
+        const out = canvas.addNode({ type: 'output.report', label: 'HTML отчёт', icon: '📄', params: { template: '<h1>Сводка</h1><pre>{{$input.content}}</pre>' }, x: 620, y: 80 });
+        canvas.addEdge(trigger.id, ai.id);
+        canvas.addEdge(ai.id, out.id);
+        canvas.fit();
+      }
+    });
   }
 
   function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
