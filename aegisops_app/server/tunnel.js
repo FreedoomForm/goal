@@ -244,7 +244,20 @@ async function start(port, provider = 'auto') {
       log.warn('tunnel.start_failed', { provider: p, err: err.message });
     }
   }
-  throw new Error('No tunnel provider available: ' + JSON.stringify(errors));
+
+  // Graceful fallback: no cloud tunnel available, but local gateway still works.
+  // Return a "gateway-only" result instead of throwing — the mobile app can still
+  // connect directly on LAN via the WebSocket gateway.
+  log.info('tunnel.fallback_gateway_only', { errors });
+  const gwStatus = gateway.getStatus();
+  return {
+    provider: 'gateway-only',
+    url: '',
+    gateway_only: true,
+    message: 'Cloud tunnel unavailable. Use local WebSocket gateway on LAN instead.',
+    errors,
+    gateway: gwStatus,
+  };
 }
 
 async function stop() {

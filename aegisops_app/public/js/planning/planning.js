@@ -132,23 +132,102 @@
 
     const canvasEl = document.getElementById('wfCanvas');
 
-    // Safety: ensure the canvas host element has a non-zero height.
-    // On some Windows Electron builds, CSS flex:1 inside a grid cell
-    // can compute to 0px height, making the canvas invisible.
-    if (canvasEl) {
+    // The canvas MUST be initialized AFTER layout is computed.
+    // On Windows Electron, CSS flex:1 inside a grid cell can compute to 0px
+    // if we measure too early (before paint). We use double-rAF to ensure
+    // the browser has completed layout.
+    const initCanvas = () => {
+      if (!canvasEl) return;
+
+      // Safety: ensure the canvas host element has a non-zero height.
       const rect = canvasEl.getBoundingClientRect();
       if (rect.height < 50) {
         // Fallback: set explicit pixel height based on viewport
         const fallbackH = Math.max(400, window.innerHeight - 260);
         canvasEl.style.height = fallbackH + 'px';
       }
-    }
 
-    const canvas = new window.WorkflowCanvas(canvasEl, {
-      onChange: () => { /* autosave hook could go here */ },
-      onOpenInspector: node => openInspector(node),
-      onRunPreview: () => runCurrent(),
-    });
+      // Now that layout is settled, initialize the canvas
+      const canvas = new window.WorkflowCanvas(canvasEl, {
+        onChange: () => { /* autosave hook could go here */ },
+        onOpenInspector: node => openInspector(node),
+        onRunPreview: () => runCurrent(),
+      });
+
+      // Seed starter graph if empty (deferred to ensure layout is settled)
+      requestAnimationFrame(() => {
+        if (canvas.nodes.size === 0) {
+          const trigger = canvas.addNode({ type: 'trigger.manual', label: 'Ручной запуск', icon: '▶️', x: 60, y: 80 });
+          const ai = canvas.addNode({ type: 'ai.ask', label: 'AI-запрос', icon: '🤖', params: { prompt_template: 'Сформируй ежедневную сводку по газовому балансу', system: 'Ты enterprise аналитик.' }, x: 340, y: 80 });
+          const out = canvas.addNode({ type: 'output.report', label: 'HTML отчёт', icon: '📄', params: { template: '<h1>Сводка</h1><pre>{{$input.content}}</pre>' }, x: 620, y: 80 });
+          canvas.addEdge(trigger.id, ai.id);
+          canvas.addEdge(ai.id, out.id);
+          canvas.fit();
+        }
+      });
+
+      // Expose canvas for save/load/run actions
+      window._wfCanvas = canvas;
+      window._wfCurrentId = null;
+
+      /* Actions */
+      document.getElementById('wfSaveBtn').onclick = async () => {
+        try {
+          const saved = await apiJson('/api/workflows', {
+            method: 'POST',
+            body: JSON.stringify({
+              id: window._wfCurrentId,
+              name: document.getElementById('wfName').value,
+              cron_expr: document.getElementById('wfCron').value,
+              graph: canvas.exportGraph(),
+              enabled: true,
+            }),
+          });
+          window._wfCurrentId = saved.id;
+          window.showToast?.('Workflow сохранён', 'success');
+        } catch (err) { window.showToast?.('Ошибка: ' + err.message, 'error'); }
+      };
+
+      document.getElementById('wfLoadBtn').onclick = async () => {
+        const list = await apiJson('/api/workflows');
+        if (!list.length) return window.showToast?.('Нет сохранённых workflow', 'info');
+        const id = prompt('ID workflow:\n' + list.map(w => `${w.id}. ${w.name}`).join('\n'));
+        if (!id) return;
+        const wf = await apiJson('/api/workflows/' + parseInt(id));
+        window._wfCurrentId = wf.id;
+        document.getElementById('wfName').value = wf.name;
+        document.getElementById('wfCron').value = wf.cron_expr || '';
+        canvas.importGraph(wf.graph);
+      };
+
+      async function runCurrent() {
+        if (!window._wfCurrentId) {
+          window.showToast?.('Сначала сохраните workflow', 'warning');
+          return;
+        }
+        window.showToast?.('Запускаем...', 'info');
+        try {
+          const res = await apiJson('/api/workflows/' + window._wfCurrentId + '/run', { method: 'POST', body: JSON.stringify({}) });
+          canvas.highlightTrace(res.trace);
+          const el = document.getElementById('wfTrace');
+          el.hidden = false;
+          document.getElementById('wfTraceBody').innerHTML = res.trace.map(t => `
+            <div class="trace-row trace-${t.status}">
+              <span class="trace-id">${t.id}</span>
+              <span class="trace-type">${t.type}</span>
+              <span class="trace-status">${t.status}</span>
+              <span class="trace-ms">${t.ms} мс</span>
+              ${t.error ? `<div class="trace-error-msg">${escapeHtml(t.error)}</div>` : ''}
+              ${t.output_preview ? `<pre class="trace-preview">${escapeHtml(t.output_preview)}</pre>` : ''}
+            </div>
+          `).join('');
+          window.showToast?.('Готово', 'success');
+        } catch (err) { window.showToast?.('Ошибка: ' + err.message, 'error'); }
+      }
+    };
+
+    // Double-rAF: ensures the browser has rendered the layout before we measure
+    requestAnimationFrame(() => requestAnimationFrame(initCanvas));
 
     // Inspector
     function openInspector(node) {
@@ -214,76 +293,8 @@
       return obj;
     }
 
-    /* Actions */
-    let currentId = null;
-    document.getElementById('wfSaveBtn').onclick = async () => {
-      try {
-        const saved = await apiJson('/api/workflows', {
-          method: 'POST',
-          body: JSON.stringify({
-            id: currentId,
-            name: document.getElementById('wfName').value,
-            cron_expr: document.getElementById('wfCron').value,
-            graph: canvas.exportGraph(),
-            enabled: true,
-          }),
-        });
-        currentId = saved.id;
-        window.showToast?.('Workflow сохранён', 'success');
-      } catch (err) { window.showToast?.('Ошибка: ' + err.message, 'error'); }
-    };
-
-    document.getElementById('wfLoadBtn').onclick = async () => {
-      const list = await apiJson('/api/workflows');
-      if (!list.length) return window.showToast?.('Нет сохранённых workflow', 'info');
-      const id = prompt('ID workflow:\n' + list.map(w => `${w.id}. ${w.name}`).join('\n'));
-      if (!id) return;
-      const wf = await apiJson('/api/workflows/' + parseInt(id));
-      currentId = wf.id;
-      document.getElementById('wfName').value = wf.name;
-      document.getElementById('wfCron').value = wf.cron_expr || '';
-      canvas.importGraph(wf.graph);
-    };
-
-    async function runCurrent() {
-      if (!currentId) {
-        window.showToast?.('Сначала сохраните workflow', 'warning');
-        return;
-      }
-      window.showToast?.('Запускаем...', 'info');
-      try {
-        const res = await apiJson('/api/workflows/' + currentId + '/run', { method: 'POST', body: JSON.stringify({}) });
-        canvas.highlightTrace(res.trace);
-        const el = document.getElementById('wfTrace');
-        el.hidden = false;
-        document.getElementById('wfTraceBody').innerHTML = res.trace.map(t => `
-          <div class="trace-row trace-${t.status}">
-            <span class="trace-id">${t.id}</span>
-            <span class="trace-type">${t.type}</span>
-            <span class="trace-status">${t.status}</span>
-            <span class="trace-ms">${t.ms} мс</span>
-            ${t.error ? `<div class="trace-error-msg">${escapeHtml(t.error)}</div>` : ''}
-            ${t.output_preview ? `<pre class="trace-preview">${escapeHtml(t.output_preview)}</pre>` : ''}
-          </div>
-        `).join('');
-        window.showToast?.('Готово', 'success');
-      } catch (err) { window.showToast?.('Ошибка: ' + err.message, 'error'); }
-    }
-
     // Guide
     document.getElementById('wfGuideBtn').onclick = () => window.WorkflowGuide.open();
-
-    // Seed starter graph if empty (deferred to ensure layout is settled)
-    requestAnimationFrame(() => {
-      if (canvas.nodes.size === 0) {
-        const trigger = canvas.addNode({ type: 'trigger.manual', label: 'Ручной запуск', icon: '▶️', x: 60, y: 80 });
-        const ai = canvas.addNode({ type: 'ai.ask', label: 'AI-запрос', icon: '🤖', params: { prompt_template: 'Сформируй ежедневную сводку по газовому балансу', system: 'Ты enterprise аналитик.' }, x: 340, y: 80 });
-        const out = canvas.addNode({ type: 'output.report', label: 'HTML отчёт', icon: '📄', params: { template: '<h1>Сводка</h1><pre>{{$input.content}}</pre>' }, x: 620, y: 80 });
-        canvas.addEdge(trigger.id, ai.id);
-        canvas.addEdge(ai.id, out.id);
-        canvas.fit();
-      }
-    });
   }
 
   function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }

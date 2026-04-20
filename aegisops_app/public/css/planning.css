@@ -2,9 +2,11 @@
 .planning-wrap {
   display: grid;
   grid-template-columns: 260px 1fr 320px;
+  grid-template-rows: 1fr;        /* explicit single row that stretches */
   gap: 16px;
   height: calc(100vh - 180px);
   min-height: 600px;
+  align-items: stretch;           /* ensure grid items stretch to full height */
 }
 
 .planning-palette {
@@ -67,6 +69,9 @@
   display: flex;
   flex-direction: column;
   min-height: 500px;
+  /* Explicitly stretch to fill the grid cell height — critical for Windows Electron
+     where flex children sometimes don't inherit height from CSS Grid parent */
+  height: 100%;
 }
 
 .wf-meta {
@@ -90,9 +95,9 @@
   flex: 1;
   position: relative;
   min-height: 400px;
-  /* Explicit height fallback for Windows Electron where flex:1 sometimes
-     doesn't compute height correctly inside a CSS Grid cell */
-  height: calc(100% - 44px);
+  /* Use stretch behavior instead of calc(100% - 44px) — more reliable
+     in Windows Electron where the meta bar height may vary.
+     flex:1 already handles the "fill remaining space" behavior. */
   overflow: hidden;
 }
 

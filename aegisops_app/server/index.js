@@ -233,7 +233,13 @@ function createApp() {
       const port = parseInt(req.body?.port || process.env.PORT || 18090);
       const provider = req.body?.provider || 'auto';
       const r = await tunnel.start(port, provider);
-      res.json(r);
+      // If tunnel returned gateway-only (no cloud tunnel available), return 200 with info
+      // instead of 500 — the local gateway is still usable on LAN
+      if (r.gateway_only) {
+        res.json({ ...r, warning: r.message });
+      } else {
+        res.json(r);
+      }
     } catch (err) { res.status(500).json({ error: err.message }); }
   });
   app.post('/api/tunnel/stop', authMiddleware({ scopes: ['*'] }), async (req, res) => {

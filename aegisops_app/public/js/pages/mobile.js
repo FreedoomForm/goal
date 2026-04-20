@@ -141,9 +141,16 @@
       try {
         const r = await fetch('/api/tunnel/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: 'cloudflared', port: 18090 }) });
         const data = await r.json();
-        if (!r.ok) throw new Error(data.error);
-        window.showToast?.('Туннель запущен', 'success');
-        renderTunnelStatus();
+        // Handle gateway-only mode (tunnel unavailable but LAN still works)
+        if (data.gateway_only || data.warning) {
+          window.showToast?.('⚠️ ' + (data.warning || 'Туннель недоступен. Используйте локальный шлюз.'), 'warning');
+          renderTunnelStatus();
+        } else if (!r.ok) {
+          throw new Error(data.error);
+        } else {
+          window.showToast?.('Туннель запущен', 'success');
+          renderTunnelStatus();
+        }
       } catch (err) { window.showToast?.('Ошибка: ' + err.message, 'error'); }
     };
 

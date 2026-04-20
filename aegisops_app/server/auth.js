@@ -122,11 +122,31 @@ async function verifyAdminPassword(password) {
 }
 
 /* ───── Middleware ───── */
+function _isPrivateIP(ip) {
+  // Check if an IP is localhost or a private/LAN address (RFC 1918)
+  if (!ip) return false;
+  // Normalize IPv6-mapped IPv4
+  const normalized = ip.replace(/^::ffff:/, '');
+  if (normalized === '127.0.0.1' || normalized === '::1' || normalized === 'localhost') return true;
+  // RFC 1918 private ranges: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+  const parts = normalized.split('.');
+  if (parts.length !== 4) return false;
+  const octets = parts.map(Number);
+  if (octets[0] === 10) return true;                          // 10.0.0.0/8
+  if (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) return true; // 172.16.0.0/12
+  if (octets[0] === 192 && octets[1] === 168) return true;    // 192.168.0.0/16
+  // Link-local 169.254.0.0/16 (some LANs)
+  if (octets[0] === 169 && octets[1] === 254) return true;
+  return false;
+}
+
 function authMiddleware({ required = true, scopes = [] } = {}) {
   return (req, res, next) => {
-    // Allow localhost without auth unless explicitly disabled
+    // Allow localhost AND LAN/private IPs without auth unless explicitly disabled.
+    // This is critical for Android mobile access: the APK connects via LAN Wi-Fi,
+    // and without this, all /api/ calls from the phone get 401 → endless loading.
     const ip = req.ip || req.connection?.remoteAddress || '';
-    const isLocal = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+    const isLocal = _isPrivateIP(ip);
     const enforceLocal = process.env.AEGISOPS_ENFORCE_LOCAL_AUTH === '1';
     if (isLocal && !enforceLocal) { req.auth = { local: true, scopes: ['*'] }; return next(); }
 
