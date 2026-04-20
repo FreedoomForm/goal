@@ -1832,6 +1832,7 @@ select:focus-visible {
 #splashScreen.hidden {
   visibility: hidden;
   pointer-events: none;
+  display: none !important;
 }
 .splash-step {
   padding: 8px 12px;

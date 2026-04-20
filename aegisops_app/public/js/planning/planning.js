@@ -55,7 +55,45 @@
       <div id="wfGuideOverlay" class="wf-guide-overlay" hidden></div>
     `;
 
-    const catalog = await apiJson('/api/workflows/catalog').catch(() => []);
+    // Fetch catalog with robust fallback
+    let catalog = [];
+    try {
+      catalog = await Promise.race([
+        apiJson('/api/workflows/catalog'),
+        new Promise((resolve) => setTimeout(() => resolve([]), 4000))
+      ]);
+    } catch (e) {
+      catalog = [];
+    }
+
+    // Provide built-in catalog if server returned empty or error
+    if (!Array.isArray(catalog) || catalog.length === 0) {
+      catalog = [
+        { category: 'Триггеры', items: [
+          { type: 'trigger.manual', label: 'Ручной запуск', icon: '▶️', params: {} },
+          { type: 'trigger.cron', label: 'Cron распис.', icon: '⏰', params: { cron: '0 9 * * *' } },
+          { type: 'trigger.webhook', label: 'Webhook', icon: '🌐', params: { path: '/hook' } },
+        ]},
+        { category: 'Коннекторы', items: [
+          { type: 'connector.fetch', label: 'Запрос данных', icon: '📥', params: { connector_id: null, query: {} } },
+          { type: 'connector.write', label: 'Запись данных', icon: '📤', params: { connector_id: null } },
+        ]},
+        { category: 'Данные', items: [
+          { type: 'data.transform', label: 'JS выражение', icon: '🔧', params: { expression: '$input' } },
+          { type: 'data.filter', label: 'Фильтр', icon: '🔍', params: { expression: 'true' } },
+          { type: 'data.merge', label: 'Объединение', icon: '🔗', params: {} },
+        ]},
+        { category: 'AI / MCP', items: [
+          { type: 'ai.ask', label: 'AI-запрос', icon: '🤖', params: { system: '', prompt_template: '' } },
+          { type: 'mcp.call', label: 'MCP Tool', icon: '🧩', params: { server: '', tool: '', args: {} } },
+        ]},
+        { category: 'Вывод', items: [
+          { type: 'output.telegram', label: 'Telegram', icon: '✈️', params: { text: '' } },
+          { type: 'output.webhook', label: 'Webhook POST', icon: '🔔', params: { url: '', method: 'POST', body_template: '' } },
+          { type: 'output.report', label: 'HTML отчёт', icon: '📄', params: { template: '' } },
+        ]},
+      ];
+    }
     const paletteList = document.getElementById('wfPaletteList');
     paletteList.innerHTML = catalog.map(group => `
       <div class="palette-group">
@@ -81,9 +119,16 @@
       });
     });
 
-    // Fetch connectors & MCP servers for inspector enums
-    const connectors = await apiJson('/api/connectors').catch(() => []);
-    const mcpServers = (await apiJson('/api/mcp/servers').catch(() => ({ persisted: [] }))).persisted || [];
+    // Fetch connectors & MCP servers for inspector enums (with timeout + fallback)
+    let connectors = [];
+    let mcpServers = [];
+    try {
+      connectors = await Promise.race([apiJson('/api/connectors'), new Promise(r => setTimeout(() => r([]), 3000))]).catch(() => []);
+    } catch { connectors = []; }
+    try {
+      const mcpRes = await Promise.race([apiJson('/api/mcp/servers'), new Promise(r => setTimeout(() => r({ persisted: [] }), 3000))]).catch(() => ({ persisted: [] }));
+      mcpServers = mcpRes.persisted || [];
+    } catch { mcpServers = []; }
 
     const canvas = new window.WorkflowCanvas(document.getElementById('wfCanvas'), {
       onChange: () => { /* autosave hook could go here */ },

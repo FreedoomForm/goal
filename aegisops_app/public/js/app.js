@@ -142,7 +142,15 @@ function navigateTo(page) {
 
 async function renderPage(page) {
   const container = $('pageContainer');
-  // No loading spinner — render pages directly for instant navigation
+  // Ensure no overlay is blocking the page (safety for Electron/Windows)
+  const splash = $('splashScreen');
+  const loading = $('loadingScreen');
+  if (splash && (splash.style.display === 'flex' || !splash.classList.contains('hidden'))) {
+    hideSplash();
+  }
+  if (loading && loading.style.display !== 'none') {
+    hideLoadingScreen();
+  }
 
   try {
     switch (page) {
@@ -1764,17 +1772,23 @@ async function runSplashSequence() {
   const splash = $('splashScreen');
   const steps = $('splashSteps');
   const bar = $('splashProgressBar');
-  if (!splash || !steps || !bar) { hideLoadingScreen(); return; }
+  if (!splash || !steps || !bar) { hideLoadingScreen(); hideSplash(); return; }
 
   // Make sure splash is visible
   splash.style.display = 'flex';
 
+  // Safety: force hide splash after max 8 seconds no matter what
+  const safetyTimer = setTimeout(() => {
+    console.warn('[AegisOps] Splash safety timeout — forcing hide');
+    hideSplash();
+  }, 8000);
+
   const setupSteps = [
-    { icon: '⏳', text: 'Подключение к серверу...', action: async () => { await api('/api/health').catch(() => {}); } },
-    { icon: '🤖', text: 'Проверка Ollama...', action: async () => { try { await api('/api/ai/status'); } catch {} } },
-    { icon: '📥', text: 'Настройка AI движка...', action: async () => { try { await api('/api/ai/ensure', { method: 'POST', body: '{}' }); } catch {} } },
-    { icon: '🧩', text: 'Проверка OpenClaw (MCP)...', action: async () => { try { await api('/api/mcp/servers'); } catch {} } },
-    { icon: '✅', text: 'Готово!', action: async () => { await new Promise(r => setTimeout(r, 400)); } },
+    { icon: '⏳', text: 'Подключение к серверу...', action: async () => { await Promise.race([api('/api/health').catch(() => {}), new Promise(r => setTimeout(r, 3000))]); } },
+    { icon: '🤖', text: 'Проверка Ollama...', action: async () => { try { await Promise.race([api('/api/ai/status'), new Promise(r => setTimeout(r, 2000))]); } catch {} } },
+    { icon: '📥', text: 'Настройка AI движка...', action: async () => { try { await Promise.race([api('/api/ai/ensure', { method: 'POST', body: '{}' }), new Promise(r => setTimeout(r, 2000))]); } catch {} } },
+    { icon: '🧩', text: 'Проверка OpenClaw (MCP)...', action: async () => { try { await Promise.race([api('/api/mcp/servers'), new Promise(r => setTimeout(r, 2000))]); } catch {} } },
+    { icon: '✅', text: 'Готово!', action: async () => { await new Promise(r => setTimeout(r, 300)); } },
   ];
 
   steps.innerHTML = setupSteps.map((s, i) =>
@@ -1792,8 +1806,10 @@ async function runSplashSequence() {
     if (stepEl) { stepEl.classList.remove('active'); stepEl.classList.add('done'); }
   }
 
+  clearTimeout(safetyTimer);
+
   // Auto-hide after a short delay
-  setTimeout(hideSplash, 600);
+  setTimeout(hideSplash, 400);
 }
 
 function hideLoadingScreen() {
@@ -1805,12 +1821,20 @@ function hideLoadingScreen() {
 }
 
 function hideSplash() {
+  // Mark splash as dismissed so the load handler in index.html won't re-show it
+  window._splashDismissed = true;
+
   // Hide both splash and loading screens
   hideLoadingScreen();
   const splash = $('splashScreen');
   if (splash) {
     splash.classList.add('hiding');
-    setTimeout(() => splash.classList.add('hidden'), 600);
+    splash.classList.remove('visible');
+    // Immediately set display none after animation to prevent blur overlay lingering
+    setTimeout(() => {
+      splash.classList.add('hidden');
+      splash.style.display = 'none';
+    }, 600);
   }
 }
 
