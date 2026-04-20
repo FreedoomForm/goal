@@ -142,7 +142,7 @@ function navigateTo(page) {
 
 async function renderPage(page) {
   const container = $('pageContainer');
-  container.innerHTML = '<div class="loading"><div class="spinner"></div><span>Загрузка...</span></div>';
+  // No loading spinner — render pages directly for instant navigation
 
   try {
     switch (page) {
@@ -1759,46 +1759,59 @@ async function renderSettings(container) {
 }
 
 /* ══════════════ INIT ══════════════ */
-/* ══════════════ Splash Screen — Auto-download Ollama & OpenClaw ══════════════ */
+/* ══════════════ Splash Screen — Auto-setup Ollama & OpenClaw ══════════════ */
 async function runSplashSequence() {
   const splash = $('splashScreen');
   const steps = $('splashSteps');
   const bar = $('splashProgressBar');
-  if (!splash || !steps || !bar) { hideSplash(); return; }
+  if (!splash || !steps || !bar) { hideLoadingScreen(); return; }
 
-  const splashSteps = [
+  // Make sure splash is visible
+  splash.style.display = 'flex';
+
+  const setupSteps = [
     { icon: '⏳', text: 'Подключение к серверу...', action: async () => { await api('/api/health').catch(() => {}); } },
-    { icon: '🤖', text: 'Проверка Ollama...', action: async () => { try { await api('/api/ai/ollama/status'); } catch {} } },
-    { icon: '📥', text: 'Загрузка Ollama (при необходимости)...', action: async () => { try { await api('/api/ai/ensure', { method: 'POST', body: '{}' }); } catch {} } },
-    { icon: '🧩', text: 'Проверка OpenClaw...', action: async () => { try { await api('/api/ai/openclaw/status'); } catch {} } },
-    { icon: '🔗', text: 'Подключение OpenClaw к Ollama...', action: async () => { try { await api('/api/ai/openclaw/configure', { method: 'POST', body: '{}' }); } catch {} } },
-    { icon: '✅', text: 'Готово!', action: async () => { await new Promise(r => setTimeout(r, 500)); } },
+    { icon: '🤖', text: 'Проверка Ollama...', action: async () => { try { await api('/api/ai/status'); } catch {} } },
+    { icon: '📥', text: 'Настройка AI движка...', action: async () => { try { await api('/api/ai/ensure', { method: 'POST', body: '{}' }); } catch {} } },
+    { icon: '🧩', text: 'Проверка OpenClaw (MCP)...', action: async () => { try { await api('/api/mcp/servers'); } catch {} } },
+    { icon: '✅', text: 'Готово!', action: async () => { await new Promise(r => setTimeout(r, 400)); } },
   ];
 
-  steps.innerHTML = splashSteps.map((s, i) =>
+  steps.innerHTML = setupSteps.map((s, i) =>
     `<div class="splash-step" data-step="${i}"><span class="splash-step-icon">${s.icon}</span><span>${s.text}</span></div>`
   ).join('');
 
-  for (let i = 0; i < splashSteps.length; i++) {
+  for (let i = 0; i < setupSteps.length; i++) {
     const stepEl = steps.querySelector(`[data-step="${i}"]`);
     if (stepEl) { stepEl.classList.add('active'); stepEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
-    bar.style.width = `${((i + 0.5) / splashSteps.length) * 100}%`;
+    bar.style.width = `${((i + 0.5) / setupSteps.length) * 100}%`;
 
-    try { await splashSteps[i].action(); } catch {}
+    try { await setupSteps[i].action(); } catch {}
 
-    bar.style.width = `${((i + 1) / splashSteps.length) * 100}%`;
+    bar.style.width = `${((i + 1) / setupSteps.length) * 100}%`;
     if (stepEl) { stepEl.classList.remove('active'); stepEl.classList.add('done'); }
   }
 
   // Auto-hide after a short delay
-  setTimeout(hideSplash, 800);
+  setTimeout(hideSplash, 600);
+}
+
+function hideLoadingScreen() {
+  const ls = $('loadingScreen');
+  if (ls && ls.style.display !== 'none') {
+    ls.style.opacity = '0';
+    setTimeout(() => { ls.style.display = 'none'; }, 500);
+  }
 }
 
 function hideSplash() {
+  // Hide both splash and loading screens
+  hideLoadingScreen();
   const splash = $('splashScreen');
-  if (!splash) return;
-  splash.classList.add('hiding');
-  setTimeout(() => splash.classList.add('hidden'), 400);
+  if (splash) {
+    splash.classList.add('hiding');
+    setTimeout(() => splash.classList.add('hidden'), 600);
+  }
 }
 
 window.addEventListener('DOMContentLoaded', () => {

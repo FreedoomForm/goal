@@ -3,21 +3,35 @@
  * REST API для 5 ИИ-модулей системы прогнозирования
  */
 const express = require('express');
+const { queryAll, queryOne } = require('../db/pg');
 const { runModule, modules } = require('../modules/engine');
 const { log } = require('../middleware/logger');
 
 const router = express.Router();
 
-// Список всех модулей
-router.get('/', (req, res) => {
-  res.json({
-    modules: Object.keys(modules).map(code => ({
-      code,
-      name: modules[code].name || code,
-      endpoint: `/api/modules/${code}/run`,
-    })),
-    total: Object.keys(modules).length,
-  });
+// Список всех модулей — returns array compatible with frontend renderModules()
+router.get('/', async (req, res) => {
+  try {
+    // Try to get modules from database first (they have sort_order, icons, etc.)
+    const dbModules = await queryAll('SELECT * FROM modules ORDER BY sort_order');
+    if (dbModules && dbModules.length > 0) {
+      return res.json(dbModules);
+    }
+  } catch (err) {
+    // DB query failed, fall through to static list
+  }
+
+  // Fallback: return static module definitions
+  const moduleList = Object.keys(modules).map((code, idx) => ({
+    id: idx + 1,
+    code,
+    name: modules[code].name || code,
+    description: modules[code].description || '',
+    icon: modules[code].icon || '📦',
+    status: 'active',
+    sort_order: idx + 1,
+  }));
+  res.json(moduleList);
 });
 
 // Запуск модуля
@@ -36,7 +50,6 @@ router.post('/:code/run', async (req, res) => {
 });
 
 // Generic module access by code (accepts both hyphen and underscore formats)
-// Supports: gas-balance / gas_balance, consumption, payments, tariffs, risks
 router.get('/:code', async (req, res) => {
   // Normalize: gas-balance → gas_balance, consumption → consumption, etc.
   const code = req.params.code.replace(/-/g, '_');
@@ -45,7 +58,6 @@ router.get('/:code', async (req, res) => {
   }
   try {
     const params = {};
-    // Default params per module
     if (code === 'gas_balance') {
       params.region = req.query.region || 'Ташкент';
       params.days = parseInt(req.query.days) || 30;

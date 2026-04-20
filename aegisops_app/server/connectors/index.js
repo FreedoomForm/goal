@@ -38,6 +38,7 @@ const CONNECTOR_CLASSES = {
   askug: AskugConnector,
   egaz: AskugConnector,
   ugaz: AskugConnector,
+  tekinsoft: RestConnector,
 };
 
 /**
@@ -104,6 +105,7 @@ function getConnectorTypes() {
     { type: 'askug', name: 'АСКУГ / UGaz', description: 'Автоматизированная система контроля и учета газа (АСКУГ, UGaz, E-GAZ)', icon: '💳', protocol: 'REST' },
     { type: 'mqtt', name: 'MQTT / IoT', description: 'IoT-сенсоры через MQTT брокер (EMQX, HiveMQ)', icon: '📡', protocol: 'MQTT' },
     { type: 'iot', name: 'IoT Sensor', description: 'IoT-датчики (газ, температура, расход) через MQTT', icon: '🌡️', protocol: 'MQTT' },
+    { type: 'tekinsoft', name: 'Tekinsoft', description: 'Интеграция с Tekinsoft ERP/биллинг', icon: '🌐', protocol: 'REST' },
   ];
 }
 

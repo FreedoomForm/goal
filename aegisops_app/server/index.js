@@ -277,6 +277,130 @@ function createApp() {
     }
   });
 
+  /* ── Settings ── */
+  app.get('/api/settings', async (req, res) => {
+    try {
+      const rows = await queryAll('SELECT key, value FROM settings');
+      const settings = {};
+      rows.forEach(r => { settings[r.key] = r.value; });
+      res.json(settings);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put('/api/settings', async (req, res) => {
+    try {
+      const changes = req.body || {};
+      const now = nowISO();
+      for (const [key, value] of Object.entries(changes)) {
+        if (!key) continue;
+        await runSQL('INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=?, updated_at=?',
+          [key, String(value), now, String(value), now]);
+      }
+      logEvent('settings.updated', changes);
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /* ── Audit ── */
+  app.get('/api/audit', async (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit) || 100;
+      const rows = await queryAll('SELECT * FROM audit_log ORDER BY id DESC LIMIT ?', [limit]);
+      res.json(rows);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /* ── ETL Pipelines ── */
+  app.get('/api/etl', async (req, res) => {
+    try {
+      const pipelines = await queryAll('SELECT * FROM etl_pipelines ORDER BY id DESC');
+      res.json(pipelines);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/etl', async (req, res) => {
+    try {
+      const { name, source_connector_id, target, schedule, config } = req.body;
+      const now = nowISO();
+      const result = await runSQL(
+        'INSERT INTO etl_pipelines (name, source_connector_id, target, schedule, config, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [name || 'New Pipeline', source_connector_id || null, target || 'local_db', schedule || '', JSON.stringify(config || {}), 'idle', now]
+      );
+      const row = await queryOne('SELECT * FROM etl_pipelines WHERE id = ?', [result.lastInsertRowid]);
+      logEvent('etl.created', { id: row?.id, name });
+      res.json(row);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/etl/:id/run', async (req, res) => {
+    try {
+      const pipeline = await queryOne('SELECT * FROM etl_pipelines WHERE id = ?', [req.params.id]);
+      if (!pipeline) return res.status(404).json({ error: 'Pipeline not found' });
+
+      // Run the ETL pipeline using the real engine
+      await runSQL("UPDATE etl_pipelines SET status='running', last_run=? WHERE id=?", [nowISO(), req.params.id]);
+      logEvent('etl.started', { id: req.params.id, name: pipeline.name });
+
+      // Execute the pipeline asynchronously
+      const pipelineId = req.params.id;
+      try {
+        const result = await runETLPipeline(pipelineId, {
+          source_connector_id: pipeline.source_connector_id,
+          target: pipeline.target,
+          config: safeJSON(pipeline.config, {}),
+        });
+        await runSQL("UPDATE etl_pipelines SET status='completed' WHERE id=?", [pipelineId]);
+        logEvent('etl.completed', { id: pipelineId });
+      } catch (err) {
+        await runSQL("UPDATE etl_pipelines SET status='error' WHERE id=?", [pipelineId]);
+        logEvent('etl.error', { id: pipelineId, error: err.message });
+      }
+
+      res.json({ ok: true, status: 'started' });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Get ETL pipeline run history
+  app.get('/api/etl/:id/runs', async (req, res) => {
+    try {
+      const runs = await getETLRunLog(parseInt(req.params.id), parseInt(req.query.limit) || 20);
+      res.json(runs);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Get ETL transformer types (for pipeline builder UI)
+  app.get('/api/etl/transformers', (req, res) => {
+    try {
+      res.json(getTransformerTypes());
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/etl/:id', async (req, res) => {
+    try {
+      await runSQL('DELETE FROM etl_pipelines WHERE id = ?', [req.params.id]);
+      logEvent('etl.deleted', { id: req.params.id });
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.use(express.static(path.join(__dirname, '..', 'public')));
   app.use('/reports', express.static(REPORTS_DIR));
 
@@ -879,58 +1003,9 @@ ${trainingData ? `# Training context\n# ${trainingData.split('\n').length} lines
     res.json({ ok: true });
   });
 
-  /* ════════════════════════════════════════════════════════
-     ═══  v2.0 NEW API ROUTES  ════════════════════════════
-     ════════════════════════════════════════════════════════ */
-
-  /* ── Real ETL Pipelines (replaces stub implementation) ── */
-  app.get('/api/etl', async (req, res) => res.json(await queryAll('SELECT * FROM etl_pipelines ORDER BY id DESC')));
-
-  app.post('/api/etl', async (req, res) => {
-    const { name, source_connector_id, target, schedule, config } = req.body;
-    const result = await runSQL(`INSERT INTO etl_pipelines (name, source_connector_id, target, schedule, config, status, created_at) VALUES (?, ?, ?, ?, ?, 'idle', ?)`,
-      [name, source_connector_id || null, target || 'local_db', schedule || '', JSON.stringify(config || {}), nowISO()]);
-    logEvent('etl.created', { id: result.lastInsertRowid, name });
-    res.json(await queryOne('SELECT * FROM etl_pipelines WHERE id = ?', [result.lastInsertRowid]));
-  });
-
-  // Run ETL pipeline with real Extract → Clean → Transform → Enrich → Validate → Load
-  app.post('/api/etl/:id/run', async (req, res) => {
-    const pipeline = await queryOne('SELECT * FROM etl_pipelines WHERE id = ?', [req.params.id]);
-    if (!pipeline) return res.status(404).json({ error: 'Pipeline not found' });
-
-    logEvent('etl.started', { id: req.params.id, name: pipeline.name });
-    res.json({ ok: true, status: 'running', message: 'ETL pipeline executing: Extract → Clean → Transform → Enrich → Validate → Load' });
-
-    // Execute real ETL pipeline in background
-    try {
-      const result = await runETLPipeline(parseInt(req.params.id));
-      logEvent('etl.completed', {
-        id: req.params.id,
-        status: result.status,
-        rows_extracted: result.rows_extracted,
-        rows_transformed: result.rows_transformed,
-        rows_loaded: result.rows_loaded,
-        rows_rejected: result.rows_rejected,
-        total_ms: result.total_ms,
-      });
-    } catch (err) {
-      logEvent('etl.error', { id: req.params.id, error: err.message });
-    }
-  });
-
-  // Get ETL pipeline run history
-  app.get('/api/etl/:id/runs', async (req, res) => {
-    const runs = await getETLRunLog(parseInt(req.params.id), parseInt(req.query.limit) || 20);
-    res.json(runs);
-  });
-
-  // Get ETL transformer types (for pipeline builder UI)
-  app.get('/api/etl/transformers', (req, res) => res.json(getTransformerTypes()));
-
-  app.delete('/api/etl/:id', async (req, res) => {
-    await runSQL('DELETE FROM etl_pipelines WHERE id = ?', [req.params.id]);
-    logEvent('etl.deleted', { id: req.params.id });
+  app.delete('/api/training/:id', async (req, res) => {
+    await runSQL('DELETE FROM training_jobs WHERE id = ?', [req.params.id]);
+    logEvent('training.deleted', { id: req.params.id });
     res.json({ ok: true });
   });
 
@@ -1007,27 +1082,6 @@ ${trainingData ? `# Training context\n# ${trainingData.split('\n').length} lines
     const result = await cleanupOldData(days);
     logEvent('db.cleanup', { retention_days: days, cleaned: result.cleaned });
     res.json(result);
-  });
-
-  /* ── Audit ── */
-  app.get('/api/audit', async (req, res) => {
-    const limit = parseInt(req.query.limit) || 50;
-    res.json(await queryAll('SELECT * FROM audit_log ORDER BY id DESC LIMIT ?', [limit]));
-  });
-
-  /* ── Settings ── */
-  app.get('/api/settings', async (req, res) => {
-    const rows = await queryAll('SELECT * FROM settings');
-    const settings = {};
-    rows.forEach(r => { settings[r.key] = r.value; });
-    res.json(settings);
-  });
-  app.put('/api/settings', async (req, res) => {
-    for (const [key, value] of Object.entries(req.body)) {
-      await runSQL('INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)', [key, String(value), nowISO()]);
-    }
-    logEvent('settings.updated', req.body);
-    res.json({ ok: true });
   });
 
   // SPA fallback

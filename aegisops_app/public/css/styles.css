@@ -1819,3 +1819,50 @@ select:focus-visible {
     overflow-x: auto;
   }
 }
+
+/* ═════════ Splash Screen Steps ═════════ */
+/* Splash screen transitions */
+#splashScreen {
+  transition: opacity 0.6s ease, visibility 0.6s ease;
+}
+#splashScreen.hiding {
+  opacity: 0;
+  pointer-events: none;
+}
+#splashScreen.hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+.splash-step {
+  padding: 8px 12px;
+  border-radius: 8px;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: #5e6c88;
+  transition: all 0.3s ease;
+}
+.splash-step .splash-step-icon {
+  font-size: 16px;
+  min-width: 20px;
+  text-align: center;
+}
+.splash-step.active {
+  color: #eaf0fc;
+  background: rgba(89, 168, 255, 0.1);
+}
+.splash-step.active .splash-step-icon {
+  animation: splashPulse 1s ease infinite;
+}
+.splash-step.done {
+  color: #23c483;
+}
+.splash-step.done .splash-step-icon {
+  opacity: 1;
+}
+@keyframes splashPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}

@@ -87,25 +87,38 @@ async function renderAIEngine(container) {
             <div class="card-title">🧩 OpenClaw — AI Агент (MCP)</div>
             <div class="card-subtitle">AI-агент платформа с инструментами (filesystem, github, shell, postgres)</div>
           </div>
-          <span class="badge badge-warning" style="font-size:13px;padding:6px 14px">🔒 Скоро</span>
+          <div class="item-actions">
+            ${openclawRunning
+              ? '<button class="btn btn-sm btn-danger" id="btnStopOpenClaw">⏹ Остановить</button>'
+              : '<button class="btn btn-sm btn-primary" id="btnStartOpenClaw">▶ Запустить</button>'
+            }
+            <button class="btn btn-sm" id="btnConfigOpenClaw">⚙ Настроить</button>
+          </div>
         </div>
         <div class="item-list mt-16">
           <div class="item-row">
             <div class="item-info">
               <div class="item-name">Статус</div>
               <div class="item-meta">
-                <span class="badge badge-neutral">Скоро будет доступен</span>
+                <span class="badge ${openclawRunning ? 'badge-success' : 'badge-neutral'}">${openclawRunning ? 'Запущен' : 'Остановлен'}</span>
+                <span class="chip">${openclawInstalled ? 'Установлен' : 'Не установлен'}</span>
               </div>
             </div>
           </div>
           <div class="item-row">
             <div class="item-info">
-              <div class="item-name">Авто-конфигурация</div>
-              <div class="item-meta"><span>OpenClaw будет автоматически использовать Ollama API</span></div>
+              <div class="item-name">MCP Пресеты</div>
+              <div class="item-meta"><span>filesystem • github • shell • postgres • custom</span></div>
             </div>
           </div>
-          <div style="padding:16px;background:#1a2540;border-radius:12px;text-align:center;color:#8ea1c9;font-size:14px">
-            🚧 Раздел OpenClaw находится в разработке. Запуск, остановка и настройка будут доступны в следующем обновлении.
+          <div class="item-row">
+            <div class="item-info">
+              <div class="item-name">Авто-конфигурация</div>
+              <div class="item-meta"><span>OpenClaw автоматически использует Ollama API как LLM-провайдер</span></div>
+            </div>
+          </div>
+          <div style="padding:12px;background:#0d1f12;border-radius:12px;border:1px solid #1a3a20;font-size:13px;color:#8ecf9a">
+            ✅ OpenClaw MCP Bridge активен. Управление MCP-серверами доступно в разделе «MCP серверы». Используйте Ollama как LLM-провайдер для AI-агента.
           </div>
         </div>
       </div>
@@ -258,7 +271,34 @@ async function renderAIEngine(container) {
     }
   });
 
-  // OpenClaw buttons removed — Coming Soon
+  // OpenClaw buttons
+  $('btnStartOpenClaw')?.addEventListener('click', async () => {
+    $('btnStartOpenClaw').disabled = true;
+    $('btnStartOpenClaw').textContent = '⏳ Запуск...';
+    try {
+      const result = await api('/api/ai/openclaw/start', { method: 'POST' });
+      showToast(`OpenClaw: ${result.status || 'запущен'}`, 'success');
+      await renderAIEngine(container);
+    } catch (err) {
+      showToast('Ошибка запуска OpenClaw: ' + err.message, 'error');
+      $('btnStartOpenClaw').disabled = false;
+      $('btnStartOpenClaw').textContent = '▶ Запустить';
+    }
+  });
+
+  $('btnStopOpenClaw')?.addEventListener('click', async () => {
+    try {
+      await api('/api/ai/openclaw/stop', { method: 'POST' });
+      showToast('OpenClaw остановлен', 'info');
+      await renderAIEngine(container);
+    } catch (err) {
+      showToast('Ошибка: ' + err.message, 'error');
+    }
+  });
+
+  $('btnConfigOpenClaw')?.addEventListener('click', () => {
+    navigateTo('mcp');
+  });
 
   $('btnSelectModel')?.addEventListener('click', async () => {
     const model = $('activeModelSelect')?.value;

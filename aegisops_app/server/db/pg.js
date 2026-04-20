@@ -412,6 +412,49 @@ async function initSQLite(customDir) {
     CREATE TABLE IF NOT EXISTS workflow_schedules (id INTEGER PRIMARY KEY AUTOINCREMENT, workflow_id INTEGER NOT NULL UNIQUE, cron_expr TEXT NOT NULL, next_run TEXT, last_run TEXT, status TEXT DEFAULT 'active', retry_count INTEGER DEFAULT 0, max_retries INTEGER DEFAULT 3, timeout_ms INTEGER DEFAULT 300000, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS etl_run_log (id INTEGER PRIMARY KEY AUTOINCREMENT, pipeline_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'running', started_at TEXT NOT NULL, finished_at TEXT, rows_extracted INTEGER DEFAULT 0, rows_transformed INTEGER DEFAULT 0, rows_loaded INTEGER DEFAULT 0, rows_rejected INTEGER DEFAULT 0, errors TEXT DEFAULT '[]', metrics TEXT DEFAULT '{}');
   `);
+
+  // Seed data for SQLite fallback if tables are empty
+  const now = nowISO();
+  const connCount = sqliteDB.exec("SELECT COUNT(*) as c FROM connectors");
+  if (connCount.length > 0 && connCount[0].values[0][0] === 0) {
+    log.info('sqlite.seeding_data');
+    sqliteDB.run(`INSERT INTO connectors (name, type, base_url, auth_mode, auth_payload, config, enabled, created_at, updated_at) VALUES
+      ('Локальная LLM (Ollama)', 'ollama', 'http://127.0.0.1:11434', 'none', '{}', '{"model":"qwen2.5:7b-instruct","embedding_model":"nomic-embed-text"}', 1, '${now}', '${now}'),
+      ('1C Бухгалтерия / OData', 'one_c_odata', 'http://localhost/accounting/odata/standard.odata', 'basic', '{"username":"","password":""}', '{"entity":"Document_РеализацияТоваровУслуг"}', 0, '${now}', '${now}'),
+      ('1C ЗУП / OData', 'one_c_odata', 'http://localhost/zup/odata/standard.odata', 'basic', '{"username":"","password":""}', '{"entity":"Document_НачислениеЗарплаты"}', 0, '${now}', '${now}'),
+      ('SAP S/4HANA / OData', 'sap_odata', 'https://sap.example.local/sap/opu/odata/sap', 'bearer', '{"token":""}', '{"service":"API_SALESORDER_SRV","sap_client":"100"}', 0, '${now}', '${now}'),
+      ('SCADA / OPC UA', 'opc_ua', 'opc.tcp://127.0.0.1:4840', 'none', '{}', '{"nodes":["ns=2;i=2","ns=2;i=3","ns=2;i=4"]}', 0, '${now}', '${now}'),
+      ('Telegram Bot', 'telegram', 'https://api.telegram.org', 'token', '{"token":"","chat_id":""}', '{}', 0, '${now}', '${now}'),
+      ('CRM (REST API)', 'crm_rest', '', 'bearer', '{"token":""}', '{}', 0, '${now}', '${now}'),
+      ('ERP Модуль (REST)', 'erp_rest', '', 'basic', '{"username":"","password":""}', '{}', 0, '${now}', '${now}')
+    `);
+    sqliteDB.run(`INSERT INTO modules (name, code, description, status, icon, sort_order) VALUES
+      ('Газовый баланс и инфраструктура', 'gas_balance', 'Прогноз баланса газа, импорт/экспорт, ПХГ', 'active', '⛽', 1),
+      ('Аналитика потребления', 'consumption', 'Анализ заявок и фактического потребления', 'active', '📈', 2),
+      ('Мониторинг платежей', 'payments', 'Платежеспособность, пени/штрафы', 'active', '💰', 3),
+      ('Финансовое моделирование', 'finance', 'Прогноз поступлений/платежей, тарифы', 'active', '📊', 4),
+      ('Управление рисками', 'risks', 'Прогноз рисков, VaR-анализ', 'active', '🔍', 5),
+      ('ETL и Дата-инжиниринг', 'etl', 'Пайплайны выгрузки, очистка, обогащение данных', 'active', '🔄', 6),
+      ('Обучение моделей', 'training', 'Локальное дообучение: LoRA, QLoRA', 'active', '🧠', 7),
+      ('Генерация документов', 'documents', 'HTML/PDF отчеты, протоколы', 'active', '📄', 8)
+    `);
+    sqliteDB.run(`INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES
+      ('theme', 'dark', '${now}'), ('language', 'ru', '${now}'),
+      ('ollama_url', 'http://127.0.0.1:11434', '${now}'),
+      ('ollama_model', 'qwen2.5:7b-instruct', '${now}'),
+      ('telegram_enabled', 'false', '${now}'),
+      ('auto_reports', 'true', '${now}'),
+      ('data_retention_days', '365', '${now}'),
+      ('db_mode', 'sqlite', '${now}')
+    `);
+    // Seed demo workflows
+    sqliteDB.run(`INSERT INTO workflows (name, description, graph, enabled, cron_expr, created_at, updated_at) VALUES
+      ('Ежедневный мониторинг коннекторов', 'Автоматическая проверка доступности всех коннекторов каждый день в 9:00', '{"nodes":[{"id":"n1","type":"trigger.cron","label":"По расписанию","icon":"⏰","params":{"cron":"0 9 * * *"},"position":{"x":60,"y":80}},{"id":"n2","type":"connector.test","label":"Проверить коннектор","icon":"🔌","params":{"connector_id":1},"position":{"x":340,"y":80}},{"id":"n3","type":"data.transform","label":"Трансформация","icon":"🔧","params":{"expression":"$input"},"position":{"x":620,"y":80}},{"id":"n4","type":"output.report","label":"HTML отчёт","icon":"📄","params":{"template":"<h2>Мониторинг коннекторов</h2><pre>{{$input}}</pre>"},"position":{"x":900,"y":80}}],"edges":[{"from":"n1","to":"n2"},{"from":"n2","to":"n3"},{"from":"n3","to":"n4"}]}', 1, '0 9 * * *', '${now}', '${now}'),
+      ('Еженедельный анализ SCADA', 'Еженедельный анализ телеметрии SCADA с помощью AI', '{"nodes":[{"id":"n1","type":"trigger.cron","label":"По расписанию","icon":"⏰","params":{"cron":"0 8 * * 1"},"position":{"x":60,"y":80}},{"id":"n2","type":"connector.fetch","label":"Получить данные","icon":"📥","params":{"connector_id":5,"query":{"nodes":["ns=2;i=2"]}},"position":{"x":340,"y":80}},{"id":"n3","type":"ai.ask","label":"AI-запрос","icon":"🤖","params":{"prompt_template":"Проанализируй показания SCADA: {{$input}}","system":"Ты аналитик SCADA систем."},"position":{"x":620,"y":80}},{"id":"n4","type":"output.report","label":"HTML отчёт","icon":"📄","params":{"template":"<h2>Анализ SCADA</h2><pre>{{$input}}</pre>"},"position":{"x":900,"y":80}}],"edges":[{"from":"n1","to":"n2"},{"from":"n2","to":"n3"},{"from":"n3","to":"n4"}]}', 1, '0 8 * * 1', '${now}', '${now}')
+    `);
+    log.info('sqlite.seeded');
+  }
+
   saveSQLite();
   log.info('sqlite.initialized', { path: dbPath });
 }
