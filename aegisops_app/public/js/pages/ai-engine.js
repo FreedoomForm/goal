@@ -394,7 +394,7 @@ async function renderAIEngine(container) {
       <div class="card-header">
         <div>
           <div class="card-title">💬 AI Чат</div>
-          <div class="card-subtitle">Общайтесь с AI напрямую. История сохраняется в текущей сессии.</div>
+          <div class="card-subtitle">Общайтесь с AI напрямую. История сохраняется в базе данных и доступна на всех устройствах.</div>
         </div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <span style="font-size:12px;color:#8ea1c9">Модель:</span>
@@ -795,11 +795,25 @@ async function renderAIEngine(container) {
   });
 
   // ─── Inline AI Chat handlers ───
-  $('btnClearChat')?.addEventListener('click', () => {
+  $('btnClearChat')?.addEventListener('click', async () => {
     state.chatHistory = [];
+    // Start a new thread
+    state.chatThreadId = `thread_${Date.now()}`;
     const chatEl = $('aiChatMessages');
     if (chatEl) chatEl.innerHTML = '<div style="text-align:center;color:#5e6c88;padding:40px 0">Задайте вопрос AI-ассистенту</div>';
   });
+
+  // Load previous chat history on page load
+  (async () => {
+    try {
+      await ensureChatThread();
+      const chatEl = $('aiChatMessages');
+      if (chatEl && state.chatHistory.length > 0) {
+        chatEl.innerHTML = state.chatHistory.map(msg => renderChatMessage(msg)).join('');
+        chatEl.scrollTop = chatEl.scrollHeight;
+      }
+    } catch {}
+  })();
 
   const sendChatMessage = async () => {
     const input = $('aiChatInput');
@@ -814,6 +828,9 @@ async function renderAIEngine(container) {
     state.chatHistory.push({ role: 'user', content: msg });
     chatEl.innerHTML += renderChatMessage({ role: 'user', content: msg });
     chatEl.scrollTop = chatEl.scrollHeight;
+
+    // Persist user message
+    saveChatMessage('user', msg);
 
     // Get selected model/provider
     const modelSelect = $('chatModelSelect');
@@ -860,6 +877,8 @@ async function renderAIEngine(container) {
                   state.chatHistory[aiMsgIndex].isStreaming = false;
                   state.chatHistory[aiMsgIndex].provider = data.provider || selectedProvider;
                   state.chatHistory[aiMsgIndex].model = data.model || selectedModel;
+                  // Persist AI response
+                  saveChatMessage('ai', fullContent, data.model || selectedModel, data.provider || selectedProvider);
                 }
               }
             }
@@ -871,24 +890,28 @@ async function renderAIEngine(container) {
       } catch (err) {
         state.chatHistory[aiMsgIndex].content = 'Ошибка: ' + err.message;
         state.chatHistory[aiMsgIndex].isStreaming = false;
+        saveChatMessage('ai', 'Ошибка: ' + err.message, selectedModel, 'error');
       }
     } else {
       try {
-        const result = await api('/api/assistant', {
+        const result = await api('/api/chat', {
           method: 'POST',
-          body: JSON.stringify({ prompt: msg, model: selectedModel, provider: selectedProvider }),
+          body: JSON.stringify({ prompt: msg, model: selectedModel, provider: selectedProvider, thread_id: state.chatThreadId }),
         });
         state.chatHistory[aiMsgIndex].content = result.content;
         state.chatHistory[aiMsgIndex].provider = result.provider;
         state.chatHistory[aiMsgIndex].model = result.model;
         state.chatHistory[aiMsgIndex].isStreaming = false;
+        if (result.thread_id) state.chatThreadId = result.thread_id;
         const bubbles = chatEl.querySelectorAll('.ai-content pre');
         const lastBubble = bubbles[bubbles.length - 1];
         if (lastBubble) lastBubble.textContent = result.content;
         chatEl.scrollTop = chatEl.scrollHeight;
+        // Already saved by /api/chat endpoint
       } catch (err) {
         state.chatHistory[aiMsgIndex].content = 'Ошибка: ' + err.message;
         state.chatHistory[aiMsgIndex].isStreaming = false;
+        saveChatMessage('ai', 'Ошибка: ' + err.message, selectedModel, 'error');
       }
     }
   };

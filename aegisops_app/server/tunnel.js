@@ -67,10 +67,33 @@ function getGatewayStatus() {
 /* ─── cloudflared auto-download ─── */
 
 /**
+ * Safely ensure a directory exists, with ENOTDIR fallback to temp.
+ * On Windows Electron, `__dirname/../data` can resolve to a path where
+ * an ancestor is a file (e.g. the app asar), causing ENOTDIR.
+ */
+function safeMkdir(dir) {
+  try {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  } catch (err) {
+    if (err.code === 'ENOTDIR') {
+      // Fallback to OS temp directory
+      const os = require('os');
+      const fallback = path.join(os.tmpdir(), 'aegisops', path.basename(dir));
+      if (!fs.existsSync(fallback)) fs.mkdirSync(fallback, { recursive: true });
+      log.info('tunnel.mkdir_enotdir_fallback', { original: dir, fallback });
+      return fallback;
+    }
+    throw err;
+  }
+}
+
+/**
  * Resolve the cloudflared binary path.
  * 1. Check if 'cloudflared' / 'cloudflared.exe' is on PATH
  * 2. Check the local data/bin directory
- * 3. Auto-download to data/bin if missing
+ * 3. Check OS temp directory (fallback for Electron/asar)
+ * 4. Auto-download to the first writable directory
  */
 async function ensureCloudflared() {
   const isWin = process.platform === 'win32';
@@ -98,7 +121,19 @@ async function ensureCloudflared() {
     return localBin;
   }
 
-  // 3. Auto-download
+  // 3. Check OS temp directory (Electron/asar fallback)
+  const os = require('os');
+  const tmpBinDir = path.join(os.tmpdir(), 'aegisops', 'bin');
+  const tmpBin = path.join(tmpBinDir, binName);
+  if (fs.existsSync(tmpBin)) {
+    if (!isWin) {
+      try { fs.chmodSync(tmpBin, 0o755); } catch {}
+    }
+    log.info('tunnel.cloudflared_found_tmp', { path: tmpBin });
+    return tmpBin;
+  }
+
+  // 4. Auto-download — try data/bin first, fall back to temp on ENOTDIR
   log.info('tunnel.cloudflared_downloading', { platform: process.platform, arch: process.arch });
   const archMap = { x64: 'amd64', arm64: 'arm64', ia32: '386', arm: 'arm' };
   const cfArch = archMap[process.arch] || 'amd64';
@@ -112,21 +147,32 @@ async function ensureCloudflared() {
     downloadUrl = `https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${cfArch}`;
   }
 
-  try {
-    if (!fs.existsSync(binDir)) fs.mkdirSync(binDir, { recursive: true });
-    await downloadFile(downloadUrl, localBin);
-    if (!isWin) {
-      try { fs.chmodSync(localBin, 0o755); } catch {}
+  // Try both locations: data/bin and tmp
+  const tryDirs = [binDir, tmpBinDir];
+  for (const dir of tryDirs) {
+    try {
+      const actualDir = safeMkdir(dir);
+      const destBin = path.join(actualDir, binName);
+      log.info('tunnel.cloudflared_downloading_to', { dest: destBin });
+      await downloadFile(downloadUrl, destBin);
+      if (!isWin) {
+        try { fs.chmodSync(destBin, 0o755); } catch {}
+      }
+      log.info('tunnel.cloudflared_downloaded', { path: destBin });
+      return destBin;
+    } catch (err) {
+      log.warn('tunnel.cloudflared_download_dir_failed', { dir, error: err.message });
+      continue; // Try next directory
     }
-    log.info('tunnel.cloudflared_downloaded', { path: localBin });
-    return localBin;
-  } catch (err) {
-    log.warn('tunnel.cloudflared_download_failed', { error: err.message });
-    throw new Error(
-      `cloudflared not found and auto-download failed: ${err.message}. ` +
-      `Install manually from https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/`
-    );
   }
+
+  // All download attempts failed
+  log.warn('tunnel.cloudflared_download_all_failed');
+  throw new Error(
+    `cloudflared not found and auto-download failed. ` +
+    `Install manually from https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/ ` +
+    `or place the binary in: ${tmpBinDir}`
+  );
 }
 
 /**

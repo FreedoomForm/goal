@@ -268,6 +268,9 @@ class GatewayServer {
       case 'api_request':
         this._handleApiRequest(sessionId, msg);
         break;
+      case 'chat':
+        this._handleChat(sessionId, msg);
+        break;
       case 'ping':
         this._send(session.ws, { type: 'pong', ts: Date.now() });
         break;
@@ -400,6 +403,76 @@ class GatewayServer {
     if (method === 'GET') return ['read'];
     if (path.includes('/auth/') && method !== 'GET') return ['*'];
     return ['run'];
+  }
+
+  /**
+   * Handle chat messages from mobile clients.
+   * Client sends: { type: "chat", prompt: "...", model: "...", provider: "...", thread_id: "..." }
+   * Server responds: { type: "chat_response", thread_id: "...", content: "...", provider: "...", model: "..." }
+   */
+  async _handleChat(sessionId, msg) {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+
+    if (!session.auth) {
+      this._send(session.ws, {
+        type: 'chat_response',
+        error: 'Authentication required',
+        request_id: msg.request_id,
+      });
+      return;
+    }
+
+    const { prompt, model, provider, thread_id, request_id } = msg;
+    if (!prompt?.trim()) {
+      this._send(session.ws, {
+        type: 'chat_response',
+        request_id: request_id || 'unknown',
+        error: 'prompt is required',
+      });
+      return;
+    }
+
+    // Proxy to the /api/chat endpoint
+    try {
+      const expressPort = parseInt(process.env.PORT || '18090');
+      const fetchUrl = `http://127.0.0.1:${expressPort}/api/chat`;
+
+      const fetchOpts = {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'X-API-Key': session.auth.raw_key || '',
+          'X-Gateway-Session': session.sessionId,
+        },
+        body: JSON.stringify({ prompt, model: model || '', provider: provider || '', thread_id: thread_id || '' }),
+      };
+
+      const res = await fetch(fetchUrl, fetchOpts);
+      let responseBody;
+      const contentType = res.headers.get('content-type') || '';
+
+      if (contentType.includes('application/json')) {
+        responseBody = await res.json();
+      } else {
+        const text = await res.text();
+        try { responseBody = JSON.parse(text); } catch { responseBody = { content: text }; }
+      }
+
+      this._send(session.ws, {
+        type: 'chat_response',
+        request_id: request_id || 'unknown',
+        ...responseBody,
+      });
+    } catch (err) {
+      log.warn('gateway.chat_proxy_error', { sessionId: session.sessionId, error: err.message });
+      this._send(session.ws, {
+        type: 'chat_response',
+        request_id: request_id || 'unknown',
+        error: `Chat proxy error: ${err.message}`,
+      });
+    }
   }
 
   async _proxyRequest(session, method, path, body, request_id, msgHeaders) {

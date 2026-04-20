@@ -8,8 +8,49 @@ const state = {
   currentPage: 'dashboard',
   dashboard: null,
   chatHistory: [],
+  chatThreadId: null, // Current thread ID for persistence
   loading: false,
 };
+
+/* ══════════════ Chat History Persistence ══════════════ */
+// Load or create a chat thread
+async function ensureChatThread() {
+  if (state.chatThreadId) return state.chatThreadId;
+  try {
+    // Try to get the most recent thread
+    const threads = await api('/api/chat/threads');
+    if (threads && threads.length > 0) {
+      state.chatThreadId = threads[0].thread_id;
+      // Load messages from this thread
+      const messages = await api(`/api/chat/threads/${state.chatThreadId}`);
+      state.chatHistory = messages.map(m => ({
+        role: m.role,
+        content: m.content,
+        model: m.model || '',
+        provider: m.provider || '',
+      }));
+      return state.chatThreadId;
+    }
+  } catch (err) {
+    // No threads yet, will create on first message
+  }
+  state.chatThreadId = `thread_${Date.now()}`;
+  return state.chatThreadId;
+}
+
+// Save a chat message to the backend
+async function saveChatMessage(role, content, model, provider) {
+  try {
+    const tid = await ensureChatThread();
+    await api(`/api/chat/threads/${tid}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ role, content, model: model || '', provider: provider || '' }),
+    });
+  } catch (err) {
+    // Silently fail — chat still works without persistence
+    console.warn('Chat history save failed:', err.message);
+  }
+}
 
 /* ══════════════ API Layer ══════════════ */
 async function api(url, options = {}) {

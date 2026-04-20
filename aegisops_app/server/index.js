@@ -862,6 +862,98 @@ function createApp() {
     logEvent('assistant.streamed', { prompt: prompt.slice(0, 200), model: activeModel, provider: providerLabel });
   });
 
+  /* ── AI Chat History ── */
+  // Ensure chat_history table exists
+  try {
+    await runSQL(`CREATE TABLE IF NOT EXISTS chat_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      thread_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      model TEXT DEFAULT '',
+      provider TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now'))
+    )`);
+    await runSQL(`CREATE INDEX IF NOT EXISTS idx_chat_history_thread ON chat_history(thread_id, created_at)`);
+  } catch (e) { console.error('chat_history table init:', e.message); }
+
+  // List chat threads
+  app.get('/api/chat/threads', async (req, res) => {
+    try {
+      const threads = await queryAll(
+        `SELECT thread_id, MIN(role) as first_role, 
+         substr(MIN(CASE WHEN role='user' THEN content END), 1, 80) as title,
+         MIN(created_at) as started_at, MAX(created_at) as last_message_at,
+         COUNT(*) as message_count
+         FROM chat_history GROUP BY thread_id ORDER BY MAX(created_at) DESC LIMIT 50`
+      );
+      res.json(threads);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // Get messages for a thread
+  app.get('/api/chat/threads/:threadId', async (req, res) => {
+    try {
+      const messages = await queryAll(
+        'SELECT * FROM chat_history WHERE thread_id = ? ORDER BY created_at ASC',
+        [req.params.threadId]
+      );
+      res.json(messages);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // Save a chat message
+  app.post('/api/chat/threads/:threadId/messages', async (req, res) => {
+    try {
+      const { role, content, model, provider } = req.body || {};
+      if (!role || !content) return res.status(400).json({ error: 'role and content required' });
+      const now = nowISO();
+      const result = await runSQL(
+        'INSERT INTO chat_history (thread_id, role, content, model, provider, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+        [req.params.threadId, role, content, model || '', provider || '', now]
+      );
+      const row = await queryOne('SELECT * FROM chat_history WHERE id = ?', [result.lastInsertRowid]);
+      res.json(row);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // Delete a thread
+  app.delete('/api/chat/threads/:threadId', async (req, res) => {
+    try {
+      await runSQL('DELETE FROM chat_history WHERE thread_id = ?', [req.params.threadId]);
+      res.json({ ok: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // AI chat endpoint for mobile (non-streaming, returns full response)
+  app.post('/api/chat', async (req, res) => {
+    try {
+      const { prompt, model, provider, thread_id } = req.body || {};
+      if (!prompt?.trim()) return res.status(400).json({ error: 'prompt required' });
+
+      // Save user message to history if thread_id provided
+      const tid = thread_id || `thread_${Date.now()}`;
+      await runSQL(
+        'INSERT INTO chat_history (thread_id, role, content, model, provider, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+        [tid, 'user', prompt, model || '', provider || '', nowISO()]
+      );
+
+      if (model) ollamaManager.setModel(model, provider);
+      const result = await askAI(prompt);
+
+      // Save AI response to history
+      await runSQL(
+        'INSERT INTO chat_history (thread_id, role, content, model, provider, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+        [tid, 'ai', result.content || '', result.model || '', result.provider || '', nowISO()]
+      );
+
+      logEvent('chat.message', { thread_id: tid, prompt: prompt.slice(0, 200), provider: result.provider });
+      res.json({ ...result, thread_id: tid });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   /* ── Module analytics ── */
   const analyticPrompts = {
     'gas-balance': 'Подготовь сводку по газовому балансу: поступление, потребление, ПХГ, импорт/экспорт, давление ГТС.',
