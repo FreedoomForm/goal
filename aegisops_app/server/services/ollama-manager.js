@@ -129,6 +129,17 @@ class OllamaManager {
     return this._activeProvider;
   }
 
+  /**
+   * Get the effective model name for cloud providers.
+   * Ollama Cloud requires -cloud suffix on model names.
+   */
+  getCloudModelName(model) {
+    if (this._activeProvider === 'ollama-cloud' && model && !model.endsWith('-cloud')) {
+      return model + '-cloud';
+    }
+    return model;
+  }
+
   setModel(model, provider) {
     if (!model) return;
     this._activeModel = model;
@@ -409,7 +420,8 @@ class OllamaManager {
     const apiKey = await this.loadOllamaCloudKey();
     if (!apiKey) throw new Error('Ollama Cloud API key not configured');
 
-    const model = options.model || this._activeModel || 'gpt-oss:120b-cloud';
+    const rawModel = options.model || this._activeModel || 'gpt-oss:120b-cloud';
+    const model = rawModel.endsWith('-cloud') ? rawModel : rawModel + '-cloud';
     const res = await fetch(`${this._ollamaCloudUrl}/api/chat`, {
       method: 'POST',
       headers: {

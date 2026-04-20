@@ -5,6 +5,19 @@ const { startServer } = require('./server/index');
 
 const EXPRESS_PORT = 18090;
 
+// ═══ FIX: Windows DPI blur ═══
+// On Windows with display scaling (125%, 150%), Electron/Chromium renders at
+// a lower resolution and then upscales, causing the "blur" effect — especially
+// visible on the planning page canvas, text, and icons.
+// Setting DPI awareness BEFORE app.ready ensures Chromium renders at native
+// resolution and lets Windows handle any compositor scaling.
+if (process.platform === 'win32') {
+  // Per-monitor V2 DPI awareness — crispest rendering on HiDPI/multi-monitor
+  app.commandLine.appendSwitch('enable-features', 'CalculateNativeWinOcclusion');
+  // Force the renderer to use the device's actual scale factor
+  app.commandLine.appendSwitch('force-device-scale-factor', '1');
+}
+
 let mainWindow;
 let serverInstance;
 

@@ -96,11 +96,10 @@ class _ConnectScreenState extends State<ConnectScreen> {
         throw Exception('Сервер не вернул API key');
       }
 
-      // Derive HTTP base URL from WS URL
-      final httpBase = normalizedUrl
+      // Use http_base_url from server response, or derive from WS URL
+      final httpBase = result['http_base_url']?.toString() ?? normalizedUrl
           .replaceFirst('wss://', 'https://')
-          .replaceFirst('ws://', 'http://')
-          .replaceFirst(RegExp(r':\d+(/.*)?$'), ''); // Remove port for HTTP
+          .replaceFirst('ws://', 'http://');
 
       // Save credentials — store WS URL for future use
       await SettingsService.instance.save(
@@ -165,14 +164,18 @@ class _ConnectScreenState extends State<ConnectScreen> {
     try {
       final data = jsonDecode(result) as Map<String, dynamic>;
       final base = data['base']?.toString() ?? '';
-      final wsUrl = data['ws']?.toString() ?? '';
+      final wsUrl = data['ws']?.toString() ?? data['ws_url']?.toString() ?? '';
+      final tunnelUrl = data['tunnel']?.toString() ?? '';
       final code = data['code']?.toString() ?? '';
 
       if (code.isEmpty) throw Exception('QR без кода сопряжения');
 
-      // Prefer WebSocket URL if available
+      // Prefer WebSocket URL if available (LAN), then tunnel, then HTTP base
       if (wsUrl.isNotEmpty) {
         await _consumeViaWebSocket(wsUrl, code);
+      } else if (tunnelUrl.isNotEmpty) {
+        // Cloudflare tunnel — use HTTPS for pairing
+        await _consumeViaHttp(tunnelUrl, code);
       } else if (base.isNotEmpty) {
         await _consumeViaHttp(base, code);
       } else {

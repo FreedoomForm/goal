@@ -41,6 +41,17 @@
         </div>
       </div>
 
+      <div class="card" style="margin-top:16px;">
+        <h2>\u2601\uFE0F Cloudflare Tunnel (удалённый доступ)</h2>
+        <p style="color:#8ea1c9;margin-bottom:12px;">Туннель для подключения из любой точки мира через интернет. Требуется установленный cloudflared.</p>
+        <div id="tunnelStatus"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-primary" id="tunnelStart">\u2601\uFE0F Запустить Cloudflare</button>
+          <button class="btn btn-ghost" id="tunnelStop">\u23F9 Остановить</button>
+        </div>
+        <div id="tunnelUrl" style="margin-top:12px;"></div>
+      </div>
+
       <div class="grid-2" style="margin-top:16px;">
         <div class="card">
           <h2>📡 Подключённые устройства</h2>
@@ -105,6 +116,43 @@
       document.getElementById('gatewayQR').innerHTML = '';
     };
 
+    /* ── Cloudflare Tunnel ── */
+    async function renderTunnelStatus() {
+      try {
+        const ts = await fetch('/api/tunnel/status').then(r => r.json()).catch(() => ({}));
+        const el = document.getElementById('tunnelStatus');
+        const urlEl = document.getElementById('tunnelUrl');
+        if (ts.active && ts.url) {
+          el.innerHTML = `<div class="tunnel-live"><span class="badge badge-success">ACTIVE</span> <span style="margin-left:8px;color:#8ea1c9;font-size:12px;">${ts.provider || 'cloudflared'}</span></div>`;
+          urlEl.innerHTML = `<div style="margin-top:8px;padding:10px;background:#09101d;border-radius:8px;border:1px solid #1f2d4a;word-break:break-all;"><code style="color:#23c483;">${ts.url}</code></div>`;
+        } else {
+          el.innerHTML = `<span class="badge badge-neutral">Не запущен</span>`;
+          urlEl.innerHTML = '';
+        }
+      } catch {
+        document.getElementById('tunnelStatus').innerHTML = `<span class="badge badge-neutral">Не запущен</span>`;
+        document.getElementById('tunnelUrl').innerHTML = '';
+      }
+    }
+    renderTunnelStatus();
+
+    document.getElementById('tunnelStart').onclick = async () => {
+      window.showToast?.('Запускаем Cloudflare Tunnel...', 'info');
+      try {
+        const r = await fetch('/api/tunnel/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: 'cloudflared', port: 18090 }) });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error);
+        window.showToast?.('Туннель запущен', 'success');
+        renderTunnelStatus();
+      } catch (err) { window.showToast?.('Ошибка: ' + err.message, 'error'); }
+    };
+
+    document.getElementById('tunnelStop').onclick = async () => {
+      await fetch('/api/tunnel/stop', { method: 'POST' });
+      window.showToast?.('Туннель остановлен', 'info');
+      renderTunnelStatus();
+    };
+
     /* ── Pairing code with QR ── */
     document.getElementById('pairBtn').onclick = async () => {
       const gw = await fetch('/api/gateway/status').then(r => r.json()).catch(() => ({ active: false }));
@@ -116,9 +164,12 @@
         wsBase = gw.lan_url;
       }
       const httpBase = location.origin;
+      const tunnelStatus = await fetch('/api/tunnel/status').then(r => r.json()).catch(() => ({}));
+      const tunnelUrl = tunnelStatus.url || '';
       const qrPayload = JSON.stringify({
         base: httpBase,
         ws: wsBase,
+        tunnel: tunnelUrl,
         code: r.code,
         type: 'aegisops-pair',
       });

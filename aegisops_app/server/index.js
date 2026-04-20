@@ -106,8 +106,9 @@ async function askAI(prompt) {
 
   // Try Ollama Cloud (official ollama.com — uses OLLAMA_API_KEY)
   try {
+    const cloudModel = ollamaManager.getCloudModelName(ollamaManager.getActiveModel());
     const result = await ollamaManager.chatWithOllamaCloud([systemMsg, userMsg], {
-      model: ollamaManager.getActiveModel(),
+      model: cloudModel,
     });
     return result;
   } catch {}
@@ -289,10 +290,19 @@ function createApp() {
       });
       const qrDataURL = await QRCode.toDataURL(qrData, { width: 256, margin: 2 });
 
+      const expressPort = parseInt(process.env.PORT || '18090');
+      const httpBaseUrl = `http://${primaryIP}:${expressPort}`;
+      
+      // Include tunnel URL if available
+      const tunnelStatus = tunnel.status();
+      const tunnelUrl = tunnelStatus.url || '';
+      
       res.json({
         code: pairResult.code,
         api_key: pairResult.api_key,
         ws_url: wsUrl,
+        http_base_url: httpBaseUrl,
+        tunnel_url: tunnelUrl,
         qr_data_url: qrDataURL,
         expires_in: pairResult.expires_in,
         lan_ips: lanIPs,
@@ -747,6 +757,7 @@ function createApp() {
 
     const activeModel = model || ollamaManager.getActiveModel();
     const activeProvider = provider || ollamaManager.getActiveProvider() || 'local';
+    const effectiveModel = activeProvider === 'ollama-cloud' ? ollamaManager.getCloudModelName(activeModel) : activeModel;
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -798,7 +809,7 @@ function createApp() {
         method: 'POST',
         headers: authHeaders,
         body: JSON.stringify({
-          model: activeModel,
+          model: effectiveModel,
           stream: true,
           messages: [
             { role: 'system', content: 'Ты enterprise AI-аналитик для газовых компаний и банков. Отвечай структурированно, с цифрами. Русский язык.' },
@@ -822,14 +833,14 @@ function createApp() {
               sendSSE('token', { content: data.message.content, done: false });
             }
             if (data.done) {
-              sendSSE('done', { content: fullContent, model: activeModel, provider: providerLabel, evalCount: data.eval_count, totalDuration: data.total_duration });
+              sendSSE('done', { content: fullContent, model: effectiveModel, provider: providerLabel, evalCount: data.eval_count, totalDuration: data.total_duration });
             }
           }
         } catch (e) {}
       });
 
       reader.on('end', () => {
-        if (!res.writableEnded) { sendSSE('done', { content: fullContent, model: activeModel, provider: providerLabel }); res.end(); }
+        if (!res.writableEnded) { sendSSE('done', { content: fullContent, model: effectiveModel, provider: providerLabel }); res.end(); }
       });
 
       reader.on('error', (err) => { sendSSE('error', { error: err.message }); res.end(); });
@@ -1206,6 +1217,19 @@ async function startServer(port = 18090, { bind = '127.0.0.1', dataDir } = {}) {
         database: isPostgreSQL() ? 'postgresql' : 'sqlite',
         kafka: kafkaResult.mode,
       });
+
+      // Attach WebSocket gateway to the HTTP server (same port, path /ws/gateway)
+      try {
+        const { gateway } = require('./gateway');
+        gateway.start(null, server).then((result) => {
+          log.info('gateway.attached', { path: '/ws/gateway', port });
+        }).catch(err => {
+          log.warn('gateway.attach_failed', { error: err.message });
+        });
+      } catch (err) {
+        log.warn('gateway.init_failed', { error: err.message });
+      }
+
       resolve(server);
     });
     server.on('error', reject);

@@ -317,13 +317,17 @@ class GatewayServer {
     if (authResult) {
       session.auth = authResult;
       log.info('gateway.auth_success', { sessionId, label: authResult.label, type: authResult.type });
+      const lanIPs = getLanIPs();
+      const httpIP = lanIPs.length > 0 ? lanIPs[0].address : '127.0.0.1';
+      const httpPort = parseInt(process.env.PORT || '18090');
       this._send(session.ws, {
         type: 'auth_result',
         success: true,
         session_id: sessionId,
         label: authResult.label,
         scopes: authResult.scopes,
-        api_key: authResult.raw_key, // Return API key for client to store (pairing code flow)
+        api_key: authResult.raw_key,
+        http_base_url: `http://${httpIP}:${httpPort}`,
       });
     } else {
       log.warn('gateway.auth_failed', { sessionId });
