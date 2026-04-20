@@ -95,7 +95,7 @@ input, textarea, select { font: inherit; }
 .bg-glow {
   position: fixed;
   border-radius: 50%;
-  filter: blur(120px);
+  filter: blur(80px);
   pointer-events: none;
   z-index: 0;
   animation: glowFloat 20s ease-in-out infinite;
@@ -1065,8 +1065,7 @@ tbody tr:last-child td {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(5, 10, 21, 0.8);
-  backdrop-filter: blur(8px);
+  background: rgba(5, 10, 21, 0.92);
   z-index: 9000;
   display: none;
   align-items: center;
@@ -1289,9 +1288,7 @@ tbody tr:last-child td {
 .sidebar-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(5, 10, 21, 0.65);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  background: rgba(5, 10, 21, 0.85);
   z-index: 99;
   opacity: 0;
   pointer-events: none;

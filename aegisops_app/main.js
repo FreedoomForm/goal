@@ -8,7 +8,10 @@ const EXPRESS_PORT = 18090;
 let mainWindow;
 let serverInstance;
 
-app.disableHardwareAcceleration(); // For compatibility in some environments
+// NOTE: Hardware acceleration is kept ENABLED for proper backdrop-filter & blur rendering.
+// Previously disabled for compatibility, but this caused the planning page blur bug on Windows.
+// If GPU issues arise on specific hardware, users can launch with --disable-gpu flag instead.
+// app.disableHardwareAcceleration();
 
 // Resolve writable data directory outside the ASAR archive.
 // In packaged apps __dirname points inside app.asar (read-only),
@@ -30,7 +33,14 @@ async function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js')
-    }
+    },
+    // Ensure smooth rendering for backdrop-filter and CSS effects
+    show: false,
+  });
+
+  // Wait for content to be ready before showing to avoid blank/blur flash
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
   });
 
   // Remove default menu for a cleaner app feel

@@ -1,6 +1,6 @@
 /**
  * AegisOps — AI Engine Routes
- * REST API for managing AI models, Ollama, and OpenClaw status
+ * REST API for managing AI models, Ollama (local + cloud), and OpenClaw status
  * Uses Node.js built-in fetch (Node 18+)
  */
 const express = require('express');
@@ -19,6 +19,14 @@ const RECOMMENDED_MODELS = [
   { name: 'qwen2.5:14b', desc: 'Высокое качество анализа для мощных машин', size: '8.7 GB', recommended: false },
 ];
 
+// Popular cloud Ollama providers
+const CLOUD_OLLAMA_PRESETS = [
+  { name: 'Ollama Cloud (Official)', url: 'https://api.ollama.cloud', desc: 'Official Ollama cloud service' },
+  { name: 'RunPod Ollama', url: '', desc: 'RunPod serverless Ollama endpoint — enter your RunPod URL' },
+  { name: 'Vast.ai Ollama', url: '', desc: 'Vast.ai Ollama endpoint — enter your instance URL' },
+  { name: 'Custom Cloud Ollama', url: '', desc: 'Any remote Ollama server — enter the URL' },
+];
+
 // Track pull progress
 const pullProgress = {};
 
@@ -26,13 +34,15 @@ const pullProgress = {};
 router.get('/status', async (req, res) => {
   try {
     const ollamaRow = await queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
-    let models = [];
+    let localModels = [];
+    let cloudModels = [];
     let activeModel = ollamaManager.getActiveModel();
     let ollamaOnline = false;
     let ollamaVersion = '';
     let ollamaBaseUrl = ollamaRow?.base_url || 'http://localhost:11434';
     let ollamaInstalled = false;
 
+    // Check local Ollama
     if (ollamaRow) {
       try {
         const { createConnector } = require('../connectors');
@@ -45,16 +55,16 @@ router.get('/status', async (req, res) => {
           try {
             const response = await fetch(`${ollamaBaseUrl}/api/tags`);
             const data = await response.json();
-            models = (data.models || []).map(m => ({
+            localModels = (data.models || []).map(m => ({
               name: m.name,
               size: m.size,
               family: m.details?.family || '',
               parameterSize: m.details?.parameter_size || '',
               modified_at: m.modified_at,
+              provider: 'local',
             }));
           } catch {}
 
-          // Try to get version
           try {
             const verRes = await fetch(`${ollamaBaseUrl}/api/version`);
             const verData = await verRes.json();
@@ -73,7 +83,6 @@ router.get('/status', async (req, res) => {
       execSync(isWin ? 'where ollama' : 'which ollama', { stdio: 'ignore' });
       ollamaInstalled = true;
     } catch {
-      // Check common paths
       const fs = require('fs');
       if (isWin) {
         const homeDir = require('os').homedir();
@@ -85,6 +94,38 @@ router.get('/status', async (req, res) => {
       }
     }
 
+    // Load cloud Ollama endpoints and their models
+    const cloudEndpoints = await ollamaManager.loadCloudEndpoints();
+    for (const endpoint of cloudEndpoints) {
+      try {
+        const headers = { 'Content-Type': 'application/json' };
+        if (endpoint.auth_mode === 'bearer' && endpoint.config?.token) {
+          headers['Authorization'] = `Bearer ${endpoint.config.token}`;
+        } else if (endpoint.auth_mode === 'token' && endpoint.config?.apiKey) {
+          headers['Authorization'] = `Bearer ${endpoint.config.apiKey}`;
+        }
+
+        const checkRes = await fetch(`${endpoint.url}/api/tags`, {
+          headers,
+          signal: AbortSignal.timeout(8000),
+        });
+        if (checkRes.ok) {
+          const data = await checkRes.json();
+          cloudModels.push(...(data.models || []).map(m => ({
+            name: m.name,
+            size: m.size,
+            family: m.details?.family || '',
+            parameterSize: m.details?.parameter_size || '',
+            modified_at: m.modified_at,
+            provider: 'cloud',
+            endpointId: endpoint.id,
+            endpointName: endpoint.name,
+            endpointUrl: endpoint.url,
+          })));
+        }
+      } catch {}
+    }
+
     // OpenClaw status — check MCP servers
     let openclawRunning = false;
     let openclawInstalled = false;
@@ -92,13 +133,16 @@ router.get('/status', async (req, res) => {
       const mcpServers = await queryAll("SELECT * FROM mcp_servers");
       const activeServers = mcpServers.filter(s => s.status === 'running' || s.status === 'active');
       openclawRunning = activeServers.length > 0;
-      openclawInstalled = true; // MCP bridge is always available
+      openclawInstalled = true;
     } catch {
-      openclawInstalled = true; // MCP module exists
+      openclawInstalled = true;
     }
 
+    // Merge all models for the model selector
+    const allModels = [...localModels, ...cloudModels];
+
     // Add installed flag to recommended models
-    const installedNames = models.map(m => m.name);
+    const installedNames = [...localModels, ...cloudModels].map(m => m.name);
     const recommended = RECOMMENDED_MODELS.map(m => ({
       ...m,
       installed: installedNames.includes(m.name),
@@ -108,19 +152,25 @@ router.get('/status', async (req, res) => {
       ollama: {
         running: ollamaOnline,
         installed: ollamaInstalled,
-        models,
+        models: localModels,
         version: ollamaVersion,
         baseUrl: ollamaBaseUrl,
+      },
+      cloud: {
+        endpoints: cloudEndpoints,
+        models: cloudModels,
       },
       openclaw: {
         running: openclawRunning,
         installed: openclawInstalled,
       },
       activeModel,
-      activeProvider: ollamaOnline ? 'ollama' : 'fallback',
+      activeProvider: ollamaManager.getActiveProvider() || (ollamaOnline ? 'local' : 'fallback'),
       recommended,
+      allModels,
       providers: [
-        { id: 'ollama', name: 'Ollama', online: ollamaOnline },
+        { id: 'ollama', name: 'Ollama (Локальный)', online: ollamaOnline },
+        { id: 'ollama_cloud', name: 'Ollama (Облачный)', online: cloudEndpoints.length > 0 },
         { id: 'openclaw', name: 'OpenClaw (MCP)', online: openclawRunning },
         { id: 'fallback', name: 'Built-in Fallback', online: true },
       ],
@@ -134,7 +184,6 @@ router.get('/status', async (req, res) => {
 router.post('/ensure', async (req, res) => {
   const results = { ollama: { running: false }, openclaw: { running: false } };
 
-  // Try to start Ollama
   try {
     const ollamaRow = await queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
     if (ollamaRow) {
@@ -153,13 +202,12 @@ router.post('/ensure', async (req, res) => {
         } else {
           spawn('ollama', ['serve'], { detached: true, stdio: 'ignore' }).unref();
         }
-        // Wait a bit for Ollama to start
         await new Promise(r => setTimeout(r, 3000));
 
-        const ollamaRow = await queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
-        if (ollamaRow) {
+        const ollamaRow2 = await queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
+        if (ollamaRow2) {
           const { createConnector } = require('../connectors');
-          const connector = createConnector(ollamaRow);
+          const connector = createConnector(ollamaRow2);
           const status = await connector.testConnection();
           results.ollama.running = status.status === 'online';
         }
@@ -167,7 +215,6 @@ router.post('/ensure', async (req, res) => {
     }
   } catch {}
 
-  // Check OpenClaw/MCP
   try {
     const mcpServers = await queryAll("SELECT * FROM mcp_servers");
     const activeServers = mcpServers.filter(s => s.status === 'running' || s.status === 'active');
@@ -212,12 +259,99 @@ router.post('/ollama/install', async (req, res) => {
     const { execSync } = require('child_process');
     const isWin = process.platform === 'win32';
     if (isWin) {
-      // On Windows, download the installer
       execSync('curl -L -o "%TEMP%\\OllamaSetup.exe" https://ollama.com/download/OllamaSetup.exe && start "" "%TEMP%\\OllamaSetup.exe"', { stdio: 'inherit', shell: true });
     } else {
       execSync('curl -fsSL https://ollama.com/install.sh | sh', { stdio: 'inherit' });
     }
     res.json({ status: 'installed' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ── Cloud Ollama: List endpoints ── */
+router.get('/cloud/endpoints', async (req, res) => {
+  try {
+    const endpoints = await ollamaManager.loadCloudEndpoints();
+    res.json({ endpoints, presets: CLOUD_OLLAMA_PRESETS });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ── Cloud Ollama: Add endpoint ── */
+router.post('/cloud/endpoints', async (req, res) => {
+  try {
+    const { name, url, auth_mode, config } = req.body;
+    if (!name || !url) return res.status(400).json({ error: 'name and url required' });
+
+    // Validate URL format
+    try { new URL(url); } catch { return res.status(400).json({ error: 'Invalid URL format' }); }
+
+    const result = await ollamaManager.addCloudEndpoint(name, url, auth_mode || 'none', config || {});
+    res.json({ ok: true, endpoint: result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ── Cloud Ollama: Test endpoint ── */
+router.post('/cloud/test', async (req, res) => {
+  try {
+    const { url, auth_mode, config } = req.body;
+    if (!url) return res.status(400).json({ error: 'url required' });
+
+    const result = await ollamaManager.testCloudEndpoint(url, auth_mode || 'none', config || {});
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ── Cloud Ollama: Delete endpoint ── */
+router.delete('/cloud/endpoints/:id', async (req, res) => {
+  try {
+    await ollamaManager.removeCloudEndpoint(parseInt(req.params.id));
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ── Cloud Ollama: List models from specific endpoint ── */
+router.get('/cloud/models', async (req, res) => {
+  try {
+    const { url, auth_mode, token, apiKey } = req.query;
+    if (!url) return res.status(400).json({ error: 'url query param required' });
+
+    const config = {};
+    if (token) config.token = token;
+    if (apiKey) config.apiKey = apiKey;
+
+    const headers = { 'Content-Type': 'application/json' };
+    if (auth_mode === 'bearer' && token) headers['Authorization'] = `Bearer ${token}`;
+    if (auth_mode === 'token' && apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+
+    try {
+      const fetchRes = await fetch(`${url.replace(/\/$/, '')}/api/tags`, {
+        headers,
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!fetchRes.ok) return res.json({ online: false, models: [], error: `HTTP ${fetchRes.status}` });
+      const data = await fetchRes.json();
+      res.json({
+        online: true,
+        models: (data.models || []).map(m => ({
+          name: m.name,
+          size: m.size,
+          family: m.details?.family || '',
+          parameterSize: m.details?.parameter_size || '',
+          provider: 'cloud',
+        })),
+      });
+    } catch (err) {
+      res.json({ online: false, models: [], error: err.message });
+    }
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -250,8 +384,6 @@ router.get('/openclaw/status', async (req, res) => {
 /* ── OpenClaw configure (set Ollama as LLM provider) ── */
 router.post('/openclaw/configure', async (req, res) => {
   try {
-    // OpenClaw uses Ollama as its LLM provider
-    // This endpoint confirms the configuration is set
     const ollamaRow = await queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
     const ollamaUrl = ollamaRow?.base_url || 'http://127.0.0.1:11434';
     let ollamaOnline = false;
@@ -274,10 +406,8 @@ router.post('/openclaw/configure', async (req, res) => {
 /* ── OpenClaw start (starts MCP bridge) ── */
 router.post('/openclaw/start', async (req, res) => {
   try {
-    // First, ensure at least one MCP server exists (create default filesystem server if none)
     const existingServers = await queryAll('SELECT * FROM mcp_servers');
     if (existingServers.length === 0) {
-      // Auto-create a default filesystem MCP server for immediate functionality
       const os = require('os');
       const { runSQL: runSQL2, nowISO: nowISO2 } = require('../db');
       const now = nowISO2();
@@ -287,7 +417,6 @@ router.post('/openclaw/start', async (req, res) => {
       );
     }
 
-    // OpenClaw works through MCP servers - auto-start persisted servers
     const { autoStartPersisted } = require('./mcp');
     await autoStartPersisted();
     res.json({ status: 'started' });
@@ -299,7 +428,6 @@ router.post('/openclaw/start', async (req, res) => {
 /* ── OpenClaw stop ── */
 router.post('/openclaw/stop', async (req, res) => {
   try {
-    // Stop all running MCP servers via the registry
     const { registry } = require('../mcp/openclaw-bridge');
     const running = registry.list();
     for (const server of running) {
@@ -318,7 +446,7 @@ router.post('/openclaw/stop', async (req, res) => {
 router.post('/models/select', (req, res) => {
   const { model, provider } = req.body;
   if (!model) return res.status(400).json({ error: 'model required' });
-  ollamaManager.setModel(model);
+  ollamaManager.setModel(model, provider);
   res.json({ ok: true, activeModel: model, provider: provider || 'ollama' });
 });
 
@@ -333,7 +461,6 @@ router.post('/models/pull/:name', async (req, res) => {
 
     pullProgress[modelName] = { status: 'pulling', progress: 0, statusText: 'Starting...' };
 
-    // Fire and forget the pull - stream progress in background
     fetch(`${ollamaUrl}/api/pull`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -89,6 +89,7 @@ function safeJSON(str, fallback) {
 
 /* ────────── AI layer (uses real Ollama connector) ────────── */
 async function askAI(prompt) {
+  // Try local Ollama first
   const ollamaRow = await queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
   if (ollamaRow) {
     try {
@@ -99,9 +100,28 @@ async function askAI(prompt) {
       ]);
       return result;
     } catch (err) {
-      // Ollama not available — fall through to fallback
+      // Local Ollama not available — try cloud
     }
   }
+
+  // Try cloud Ollama endpoints
+  try {
+    const cloudEndpoints = await ollamaManager.loadCloudEndpoints();
+    for (const endpoint of cloudEndpoints) {
+      try {
+        const cloudRow = await queryOne("SELECT * FROM connectors WHERE id = ?", [endpoint.id]);
+        if (cloudRow) {
+          const connector = createConnector(cloudRow);
+          const result = await connector.chat([
+            { role: 'system', content: 'Ты enterprise AI-аналитик для газовых компаний и банков. Отвечай структурированно, с цифрами. Русский язык.' },
+            { role: 'user', content: prompt },
+          ]);
+          return result;
+        }
+      } catch {}
+    }
+  } catch {}
+
   return { provider: 'fallback', model: 'built-in', content: generateFallbackAnalysis(prompt) };
 }
 
@@ -707,9 +727,9 @@ function createApp() {
 
   /* ── AI Assistant ── */
   app.post('/api/assistant', async (req, res) => {
-    const { prompt, model } = req.body;
+    const { prompt, model, provider } = req.body;
     if (!prompt?.trim()) return res.status(400).json({ error: 'prompt required' });
-    if (model) ollamaManager.setModel(model);
+    if (model) ollamaManager.setModel(model, provider);
     const result = await askAI(prompt);
     logEvent('assistant.asked', { prompt: prompt.slice(0, 200), provider: result.provider, model: result.model });
     res.json(result);
@@ -717,10 +737,11 @@ function createApp() {
 
   /* ── AI Assistant with Streaming (SSE) ── */
   app.post('/api/assistant/stream', async (req, res) => {
-    const { prompt, model } = req.body;
+    const { prompt, model, provider } = req.body;
     if (!prompt?.trim()) return res.status(400).json({ error: 'prompt required' });
 
     const activeModel = model || ollamaManager.getActiveModel();
+    const activeProvider = provider || ollamaManager.getActiveProvider() || 'local';
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -730,15 +751,34 @@ function createApp() {
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
-    sendSSE('meta', { model: activeModel, provider: 'ollama' });
+    const providerLabel = activeProvider === 'cloud' ? 'cloud' : 'ollama';
+    sendSSE('meta', { model: activeModel, provider: providerLabel });
 
-    const ollamaRow = await queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
-    const ollamaUrl = ollamaRow?.base_url || ollamaManager._baseUrl;
+    // Determine which Ollama URL to use (local or cloud)
+    let ollamaUrl;
+    let authHeaders = { 'Content-Type': 'application/json' };
+    if (activeProvider === 'cloud') {
+      try {
+        const cloudEndpoints = await ollamaManager.loadCloudEndpoints();
+        if (cloudEndpoints.length > 0) {
+          ollamaUrl = cloudEndpoints[0].url;
+          if (cloudEndpoints[0].auth_mode === 'bearer' && cloudEndpoints[0].config?.token) {
+            authHeaders['Authorization'] = `Bearer ${cloudEndpoints[0].config.token}`;
+          } else if (cloudEndpoints[0].auth_mode === 'token' && cloudEndpoints[0].config?.apiKey) {
+            authHeaders['Authorization'] = `Bearer ${cloudEndpoints[0].config.apiKey}`;
+          }
+        }
+      } catch {}
+    }
+    if (!ollamaUrl) {
+      const ollamaRow = await queryOne("SELECT * FROM connectors WHERE type='ollama' LIMIT 1");
+      ollamaUrl = ollamaRow?.base_url || ollamaManager._baseUrl;
+    }
 
     try {
       const chatRes = await fetch(`${ollamaUrl}/api/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders,
         body: JSON.stringify({
           model: activeModel,
           stream: true,
@@ -764,14 +804,14 @@ function createApp() {
               sendSSE('token', { content: data.message.content, done: false });
             }
             if (data.done) {
-              sendSSE('done', { content: fullContent, model: activeModel, provider: 'ollama', evalCount: data.eval_count, totalDuration: data.total_duration });
+              sendSSE('done', { content: fullContent, model: activeModel, provider: providerLabel, evalCount: data.eval_count, totalDuration: data.total_duration });
             }
           }
         } catch (e) {}
       });
 
       reader.on('end', () => {
-        if (!res.writableEnded) { sendSSE('done', { content: fullContent, model: activeModel, provider: 'ollama' }); res.end(); }
+        if (!res.writableEnded) { sendSSE('done', { content: fullContent, model: activeModel, provider: providerLabel }); res.end(); }
       });
 
       reader.on('error', (err) => { sendSSE('error', { error: err.message }); res.end(); });
@@ -782,7 +822,7 @@ function createApp() {
       res.end();
     }
 
-    logEvent('assistant.streamed', { prompt: prompt.slice(0, 200), model: activeModel });
+    logEvent('assistant.streamed', { prompt: prompt.slice(0, 200), model: activeModel, provider: providerLabel });
   });
 
   /* ── Module analytics ── */

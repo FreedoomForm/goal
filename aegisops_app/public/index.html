@@ -222,24 +222,19 @@
   <script src="js/pages/guide.js"></script>
   <script src="js/app.js"></script>
   <script>
-    // Dismiss loading screen only — do NOT re-show splash here!
-    // runSplashSequence() in app.js manages the splash screen lifecycle.
-    // Re-showign splash here caused a race condition where splash reappeared
-    // after being hidden, creating the blur/overlay bug on Windows Electron.
-    window._splashDismissed = false;
+    // Dismiss loading screen and go directly to app — no splash re-show.
+    // Previous splash re-show caused race condition on Windows Electron where
+    // the z-index:99998 splash overlay reappeared after being hidden,
+    // creating the "blur screen" bug on the planning page.
+    window._splashDismissed = true;
     window.addEventListener('load', function() {
       setTimeout(function() {
+        // Force-hide both overlays immediately
         var ls = document.getElementById('loadingScreen');
-        if (ls) {
-          ls.style.opacity = '0';
-          setTimeout(function() { ls.style.display = 'none'; }, 500);
-        }
-        // Only show splash if runSplashSequence hasn't already handled it
         var splash = document.getElementById('splashScreen');
-        if (splash && !window._splashDismissed && splash.style.display !== 'flex') {
-          splash.style.display = 'flex';
-        }
-      }, 600);
+        if (ls) { ls.style.opacity = '0'; ls.style.display = 'none'; }
+        if (splash) { splash.style.display = 'none'; }
+      }, 400);
     });
   </script>
 </body>

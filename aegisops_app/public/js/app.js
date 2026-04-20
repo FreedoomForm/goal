@@ -51,6 +51,7 @@ function formatNumber(n) {
 
 const typeIcons = {
   ollama: '🤖',
+  ollama_cloud: '☁️',
   one_c_odata: '📦',
   sap_odata: '🏢',
   opc_ua: '🏭',
@@ -73,6 +74,7 @@ const typeIcons = {
 
 const typeNames = {
   ollama: 'Ollama LLM',
+  ollama_cloud: 'Ollama Cloud',
   one_c_odata: '1C OData',
   sap_odata: 'SAP OData',
   opc_ua: 'OPC UA / SCADA',
@@ -142,15 +144,13 @@ function navigateTo(page) {
 
 async function renderPage(page) {
   const container = $('pageContainer');
-  // Ensure no overlay is blocking the page (safety for Electron/Windows)
+  // Aggressively force-hide all overlays to prevent blur/blank screen on Windows Electron
+  // This fixes the race condition where splash/loading screens linger at z-index 99998-99999
   const splash = $('splashScreen');
   const loading = $('loadingScreen');
-  if (splash && (splash.style.display === 'flex' || !splash.classList.contains('hidden'))) {
-    hideSplash();
-  }
-  if (loading && loading.style.display !== 'none') {
-    hideLoadingScreen();
-  }
+  if (splash) { splash.style.display = 'none'; splash.style.opacity = '0'; }
+  if (loading) { loading.style.display = 'none'; loading.style.opacity = '0'; }
+  window._splashDismissed = true;
 
   try {
     switch (page) {
@@ -415,7 +415,8 @@ async function renderConnectors(container) {
       <div class="form-group">
         <label class="form-label">Тип</label>
         <select class="form-select" id="newConnType">
-          <option value="ollama">🤖 Ollama LLM</option>
+          <option value="ollama">🤖 Ollama LLM (Локальный)</option>
+          <option value="ollama_cloud">☁️ Ollama Cloud (Облачный)</option>
           <option value="one_c_odata">📦 1C OData</option>
           <option value="sap_odata">🏢 SAP OData</option>
           <option value="opc_ua">🏭 OPC UA / SCADA</option>
@@ -502,7 +503,8 @@ async function renderConnectors(container) {
         <div class="form-group">
           <label class="form-label">Тип</label>
           <select class="form-select" id="editConnType">
-            <option value="ollama" ${type==='ollama'?'selected':''}>🤖 Ollama LLM</option>
+            <option value="ollama" ${type==='ollama'?'selected':''}>🤖 Ollama LLM (Локальный)</option>
+            <option value="ollama_cloud" ${type==='ollama_cloud'?'selected':''}>☁️ Ollama Cloud (Облачный)</option>
             <option value="one_c_odata" ${type==='one_c_odata'?'selected':''}>📦 1C OData</option>
             <option value="sap_odata" ${type==='sap_odata'?'selected':''}>🏢 SAP OData</option>
             <option value="opc_ua" ${type==='opc_ua'?'selected':''}>🏭 OPC UA / SCADA</option>

@@ -1,6 +1,6 @@
 /**
  * AegisOps — Model Manager
- * Управление AI моделями (Ollama, OpenClaw, и др.)
+ * Управление AI моделями (Ollama local, Ollama cloud, OpenClaw, и др.)
  */
 const ollamaManager = require('./ollama-manager');
 
@@ -8,6 +8,7 @@ class ModelManager {
   constructor() {
     this._providers = {
       ollama: ollamaManager,
+      ollama_cloud: ollamaManager, // Cloud Ollama uses same manager with different baseUrl
     };
     this._activeProvider = 'ollama';
   }
@@ -30,7 +31,7 @@ class ModelManager {
     if (provider && this._providers[provider]) {
       this._activeProvider = provider;
     }
-    this._providers[this._activeProvider]?.setModel(model);
+    this._providers[this._activeProvider]?.setModel(model, provider);
   }
 
   async listAllModels() {

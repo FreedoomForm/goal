@@ -18,6 +18,7 @@ const { decryptCredentials } = require('../security/crypto');
 /** Map of connector type → class */
 const CONNECTOR_CLASSES = {
   ollama: OllamaConnector,
+  ollama_cloud: OllamaConnector,
   one_c_odata: ODataConnector,
   sap_odata: ODataConnector,
   opc_ua: OpcUaConnector,
@@ -90,7 +91,8 @@ function _safeParseJSON(str, fallback) {
  */
 function getConnectorTypes() {
   return [
-    { type: 'ollama', name: 'Ollama LLM', description: 'Локальная нейросеть через Ollama API', icon: '🤖', protocol: 'HTTP' },
+    { type: 'ollama', name: 'Ollama LLM (Локальный)', description: 'Локальная нейросеть через Ollama API', icon: '🤖', protocol: 'HTTP' },
+    { type: 'ollama_cloud', name: 'Ollama Cloud (Облачный)', description: 'Облачный/удалённый Ollama сервер (RunPod, Vast.ai, свой сервер)', icon: '☁️', protocol: 'HTTPS' },
     { type: 'one_c_odata', name: '1C / OData', description: '1C:Enterprise через OData v3 REST API', icon: '📦', protocol: 'OData' },
     { type: 'sap_odata', name: 'SAP S/4HANA / OData', description: 'SAP S/4HANA через OData v2/v4 с CSRF', icon: '🏢', protocol: 'OData' },
     { type: 'opc_ua', name: 'OPC UA / SCADA', description: 'Промышленный контур через OPC UA', icon: '🏭', protocol: 'OPC UA' },

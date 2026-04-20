@@ -97,8 +97,7 @@
   display: flex;
   gap: 6px;
   align-items: center;
-  background: rgba(15, 24, 48, 0.9);
-  backdrop-filter: blur(6px);
+  background: rgba(15, 24, 48, 0.96);
   padding: 6px 8px;
   border-radius: 10px;
   border: 1px solid #24304e;
@@ -215,8 +214,7 @@
 /* ═════════ Guide overlay ═════════ */
 .wf-guide-overlay {
   position: fixed; inset: 0;
-  background: rgba(5, 10, 25, 0.8);
-  backdrop-filter: blur(4px);
+  background: rgba(5, 10, 25, 0.92);
   z-index: 1000;
   display: flex; align-items: center; justify-content: center;
 }
