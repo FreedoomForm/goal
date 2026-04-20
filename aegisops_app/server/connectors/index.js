@@ -1,6 +1,7 @@
 /**
  * AegisOps — Connector Registry
  * Maps connector types to their real implementation classes.
+ * Handles credential decryption for connector instances.
  */
 const { OllamaConnector } = require('./ollama');
 const { ODataConnector } = require('./odata');
@@ -12,6 +13,7 @@ const { WebhookConnector } = require('./webhook');
 const { DatabaseConnector } = require('./database');
 const { MqttConnector } = require('./mqtt');
 const { AskugConnector } = require('./askug');
+const { decryptCredentials } = require('../security/crypto');
 
 /** Map of connector type → class */
 const CONNECTOR_CLASSES = {
@@ -40,16 +42,46 @@ const CONNECTOR_CLASSES = {
 
 /**
  * Create a connector instance from a DB row.
+ * Handles credential decryption: tries encrypted_auth_payload first,
+ * then falls back to plaintext auth_payload.
  * @param {Object} row — connector record from the database
- * @returns {BaseConnector} — real connector instance
+ * @returns {BaseConnector} — real connector instance with decrypted credentials
  */
 function createConnector(row) {
   const ConnectorClass = CONNECTOR_CLASSES[row.type];
-  if (!ConnectorClass) {
-    // Fallback to generic REST for unknown types
-    return new RestConnector(row);
+  const TargetClass = ConnectorClass || RestConnector;
+
+  // Decrypt credentials if encrypted_auth_payload exists
+  let authPayload = {};
+  if (row.encrypted_auth_payload) {
+    try {
+      authPayload = decryptCredentials(row.encrypted_auth_payload);
+    } catch (err) {
+      // If decryption fails, try plaintext fallback
+      authPayload = _safeParseJSON(row.auth_payload, {});
+    }
+  } else {
+    // No encrypted payload — use plaintext
+    authPayload = _safeParseJSON(row.auth_payload, {});
   }
-  return new ConnectorClass(row);
+
+  // Parse config
+  const config = _safeParseJSON(row.config, {});
+
+  // Build a clean connector config with decrypted credentials
+  const connectorConfig = {
+    ...row,
+    auth_payload: authPayload,
+    config: config,
+  };
+
+  return new TargetClass(connectorConfig);
+}
+
+function _safeParseJSON(str, fallback) {
+  if (!str) return fallback;
+  if (typeof str === 'object') return str;
+  try { return JSON.parse(str); } catch { return fallback; }
 }
 
 /**

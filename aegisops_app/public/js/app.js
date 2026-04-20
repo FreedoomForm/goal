@@ -149,6 +149,7 @@ async function renderPage(page) {
       case 'dashboard': await renderDashboard(container); break;
       case 'connectors': await renderConnectors(container); break;
       case 'scenarios': await renderScenarios(container); break;
+      case 'schedules': await renderSchedules(container); break;
       case 'modules': await renderModules(container); break;
       case 'ai-engine': await renderAIEngine(container); break;
       case 'assistant': await renderAssistantEnhanced(container); break;
@@ -1148,6 +1149,206 @@ async function renderTraining(container) {
     });
   });
 }
+/* ══════════════ SCHEDULES PAGE ══════════════ */
+async function renderSchedules(container) {
+  const [workflows, schedules] = await Promise.all([
+    api('/api/workflows').catch(() => []),
+    api('/api/workflows/schedules').catch(() => []),
+  ]);
+
+  const cronToHuman = (expr) => {
+    if (!expr) return '—';
+    const map = {
+      '* * * * *': 'Каждую минуту',
+      '*/5 * * * *': 'Каждые 5 минут',
+      '*/10 * * * *': 'Каждые 10 минут',
+      '*/15 * * * *': 'Каждые 15 минут',
+      '*/30 * * * *': 'Каждые 30 минут',
+      '0 * * * *': 'Каждый час',
+      '0 */2 * * *': 'Каждые 2 часа',
+      '0 */6 * * *': 'Каждые 6 часов',
+      '0 0 * * *': 'Каждый день в полночь',
+      '0 5 * * *': 'Каждый день в 05:00',
+      '0 6 * * *': 'Каждый день в 06:00',
+      '0 7 * * *': 'Каждый день в 07:00',
+      '0 8 * * *': 'Каждый день в 08:00',
+      '0 9 * * *': 'Каждый день в 09:00',
+      '0 5 * * 1-5': 'Пн-Пт в 05:00',
+      '0 8 * * 1-5': 'Пн-Пт в 08:00',
+      '0 9 * * 1': 'Каждый понедельник в 09:00',
+    };
+    return map[expr] || expr;
+  };
+
+  const scheduledWorkflows = workflows.filter(w => w.cron_expr && w.cron_expr.trim() !== '');
+  const manualWorkflows = workflows.filter(w => !w.cron_expr || w.cron_expr.trim() === '');
+
+  container.innerHTML = `
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">Расписания</h2>
+        <p class="page-subtitle">Управление cron-расписаниями для автоматического запуска workflows и сценариев</p>
+      </div>
+    </div>
+
+    <div class="stats-grid mb-24">
+      <div class="stat-card">
+        <div class="stat-label">Запланировано</div>
+        <div class="stat-value">${scheduledWorkflows.length}</div>
+        <div class="stat-change up">С cron-расписанием</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Ручной запуск</div>
+        <div class="stat-value">${manualWorkflows.length}</div>
+        <div class="stat-change">Без расписания</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Всего workflows</div>
+        <div class="stat-value">${workflows.length}</div>
+        <div class="stat-change">Создано</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Активных</div>
+        <div class="stat-value">${workflows.filter(w => w.enabled).length}</div>
+        <div class="stat-change up">Включено</div>
+      </div>
+    </div>
+
+    ${scheduledWorkflows.length > 0 ? `
+      <div class="card mb-24">
+        <div class="card-header">
+          <div>
+            <div class="card-title">⏰ Запланированные workflows</div>
+            <div class="card-subtitle">Запускаются автоматически по cron-расписанию</div>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>ID</th><th>Название</th><th>Cron</th><th>Описание</th><th>Статус</th><th>Действия</th></tr></thead>
+            <tbody>
+              ${scheduledWorkflows.map(w => `
+                <tr>
+                  <td>#${w.id}</td>
+                  <td><strong>${escapeHtml(w.name)}</strong></td>
+                  <td><code style="font-size:12px;background:#0b1220;padding:4px 8px;border-radius:6px">${escapeHtml(w.cron_expr)}</code>
+                      <div style="color:#8ea1c9;font-size:12px;margin-top:2px">${cronToHuman(w.cron_expr)}</div></td>
+                  <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis">${escapeHtml(w.description || '—')}</td>
+                  <td><span class="badge ${w.enabled ? 'badge-success' : 'badge-neutral'}">${w.enabled ? 'Активен' : 'Выключен'}</span></td>
+                  <td>
+                    <div class="btn-group">
+                      <button class="btn btn-sm btn-primary run-wf" data-id="${w.id}">▶ Запустить</button>
+                      <button class="btn btn-sm toggle-wf" data-id="${w.id}" data-enabled="${w.enabled ? 1 : 0}">${w.enabled ? '⏸ Выключить' : '▶ Включить'}</button>
+                    </div>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    ` : `
+      <div class="card mb-24">
+        <div class="empty-state" style="padding:40px">
+          <div style="font-size:48px;margin-bottom:16px">⏰</div>
+          <h3 style="margin-bottom:8px">Нет запланированных workflows</h3>
+          <p style="color:#8ea1c9;margin-bottom:16px">Создайте workflow в разделе «Планирование» и укажите cron-расписание, чтобы он запускался автоматически.</p>
+          <button class="btn btn-primary" onclick="navigateTo('planning')">Перейти к планированию</button>
+        </div>
+      </div>
+    `}
+
+    <div class="card mb-24">
+      <div class="card-header">
+        <div>
+          <div class="card-title">📋 Cron-справочник</div>
+          <div class="card-subtitle">Популярные выражения для настройки расписаний</div>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Выражение</th><th>Описание</th><th>Использование</th></tr></thead>
+          <tbody>
+            ${[
+              ['*/5 * * * *', 'Каждые 5 минут', 'Мониторинг давления'],
+              ['*/30 * * * *', 'Каждые 30 минут', 'Проверка SCADA'],
+              ['0 * * * *', 'Каждый час', 'Сбор телеметрии'],
+              ['0 5 * * *', 'Каждый день в 05:00', 'Утренний отчёт'],
+              ['0 9 * * 1-5', 'Пн-Пт в 09:00', 'Рабочие дни отчёт'],
+              ['0 0 1 * *', '1-е число каждого месяца', 'Ежемесячный баланс'],
+            ].map(([expr, desc, usage]) => `
+              <tr>
+                <td><code style="font-size:12px;background:#0b1220;padding:4px 8px;border-radius:6px">${expr}</code></td>
+                <td>${desc}</td>
+                <td style="color:#8ea1c9">${usage}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    ${manualWorkflows.length > 0 ? `
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <div class="card-title">📋 Ручные workflows</div>
+            <div class="card-subtitle">Без автоматического расписания — запуск вручную</div>
+          </div>
+        </div>
+        <div class="item-list">
+          ${manualWorkflows.map(w => `
+            <div class="item-row">
+              <div class="item-info">
+                <div class="item-name">${escapeHtml(w.name)}</div>
+                <div class="item-meta"><span>${escapeHtml(w.description || 'Без описания')}</span></div>
+              </div>
+              <span class="badge ${w.enabled ? 'badge-success' : 'badge-neutral'}">${w.enabled ? 'Включен' : 'Выключен'}</span>
+              <button class="btn btn-sm btn-primary run-wf" data-id="${w.id}" style="margin-left:8px">▶ Запустить</button>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    ` : ''}
+  `;
+
+  // Run workflow buttons
+  $$('.run-wf').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      btn.textContent = '⏳...';
+      try {
+        const result = await api(`/api/workflows/${btn.dataset.id}/run`, { method: 'POST', body: JSON.stringify({}) });
+        showToast(`Workflow выполнен: ${result.trace?.filter(t => t.status === 'ok').length || 0} нод OK`, 'success');
+        await renderSchedules(container);
+      } catch (err) {
+        showToast('Ошибка: ' + err.message, 'error');
+        btn.disabled = false;
+        btn.textContent = '▶ Запустить';
+      }
+    });
+  });
+
+  // Toggle workflow enabled/disabled
+  $$('.toggle-wf').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.id;
+      const isEnabled = btn.dataset.enabled === '1';
+      try {
+        // We need the full workflow data to update
+        const wf = await api(`/api/workflows/${id}`);
+        await api(`/api/workflows/${id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ ...wf, enabled: !isEnabled }),
+        });
+        showToast(isEnabled ? 'Workflow выключен' : 'Workflow включен', 'success');
+        await renderSchedules(container);
+      } catch (err) {
+        showToast('Ошибка: ' + err.message, 'error');
+      }
+    });
+  });
+}
+
 async function renderETL(container) {
   const [pipelines, connectors] = await Promise.all([
     api('/api/etl'),

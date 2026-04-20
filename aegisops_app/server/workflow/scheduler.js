@@ -439,16 +439,16 @@ function safePreview(value) {
 }
 
 /* ─── Persistence Helpers ─── */
-function saveWorkflow({ id, name, description, graph, cron_expr, enabled }) {
+async function saveWorkflow({ id, name, description, graph, cron_expr, enabled }) {
   const ts = nowISO();
   if (id) {
-    runSQL('UPDATE workflows SET name=?, description=?, graph=?, cron_expr=?, enabled=?, updated_at=? WHERE id=?',
+    await runSQL('UPDATE workflows SET name=?, description=?, graph=?, cron_expr=?, enabled=?, updated_at=? WHERE id=?',
       [name, description || '', JSON.stringify(graph), cron_expr || '', enabled ? 1 : 0, ts, id]);
-    return queryOne('SELECT * FROM workflows WHERE id=?', [id]);
+    return await queryOne('SELECT * FROM workflows WHERE id=?', [id]);
   }
-  const r = runSQL(`INSERT INTO workflows (name, description, graph, cron_expr, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  const r = await runSQL(`INSERT INTO workflows (name, description, graph, cron_expr, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
     [name, description || '', JSON.stringify(graph), cron_expr || '', enabled ? 1 : 0, ts, ts]);
-  return queryOne('SELECT * FROM workflows WHERE id=?', [r.lastInsertRowid]);
+  return await queryOne('SELECT * FROM workflows WHERE id=?', [r.lastInsertRowid]);
 }
 
 async function listWorkflows() {

@@ -1,16 +1,21 @@
 /**
- * AegisOps — Tunnel Manager
- * Exposes the local server over the internet so mobile APK clients can reach
- * it from anywhere. Supports:
- *   • cloudflared (recommended, no account required for quick tunnels)
- *   • ngrok (if NGROK_AUTHTOKEN is set)
- *   • manual (user-provided public URL)
+ * AegisOps — Tunnel Manager & Gateway
+ * Exposes the local server so mobile APK clients can reach it.
  *
- * Discovers which binary is available and falls back gracefully.
+ * Primary method: Local WebSocket Gateway (no cloud dependency)
+ *   - WS server on configurable port (default 18091)
+ *   - Mobile connects directly on LAN or via relay
+ *   - QR code with ws://LAN_IP:PORT
+ *
+ * Optional fallback: cloud tunnels (cloudflared / ngrok / manual)
+ *   - cloudflared (no account required for quick tunnels)
+ *   - ngrok (if NGROK_AUTHTOKEN is set)
+ *   - manual (user-provided public URL)
  */
 const { spawn } = require('child_process');
 const { log } = require('./middleware/logger');
 const { runSQL, queryOne, nowISO } = require('./db');
+const { gateway, getLanIPs, generatePairingCode } = require('./gateway');
 
 let current = null; // { provider, url, proc }
 
@@ -26,12 +31,34 @@ function getPublicUrl() {
 }
 
 function status() {
+  const gw = gateway.getStatus();
   return {
     active: !!current,
     provider: current?.provider || null,
     url: current?.url || getPublicUrl(),
+    gateway: gw,
   };
 }
+
+/* ─── Local WebSocket Gateway ─── */
+
+async function startGateway(port) {
+  const gwPort = parseInt(port) || 18091;
+  const result = await gateway.start(gwPort);
+  log.info('tunnel.gateway_started', { port: gwPort });
+  return result;
+}
+
+function stopGateway() {
+  gateway.stop();
+  log.info('tunnel.gateway_stopped');
+}
+
+function getGatewayStatus() {
+  return gateway.getStatus();
+}
+
+/* ─── Cloudflare/ngrok tunnels (optional fallback) ─── */
 
 async function startCloudflared(port) {
   return new Promise((resolve, reject) => {
@@ -113,4 +140,8 @@ async function stop() {
   current = null;
 }
 
-module.exports = { start, stop, status, setPublicUrl, getPublicUrl };
+module.exports = {
+  start, stop, status, setPublicUrl, getPublicUrl,
+  // Gateway methods
+  startGateway, stopGateway, getGatewayStatus, getLanIPs, generatePairingCode,
+};

@@ -219,6 +219,29 @@ function createApp() {
     res.json({ ok: true, url });
   });
 
+  // Gateway management (primary — local WS)
+  app.get('/api/gateway/status', authMiddleware({ required: true }), (req, res) => {
+    res.json(tunnel.getGatewayStatus());
+  });
+
+  app.post('/api/gateway/start', authMiddleware({ scopes: ['*'] }), async (req, res) => {
+    try {
+      const port = parseInt(req.body?.port || process.env.GATEWAY_PORT || '18091');
+      const result = await tunnel.startGateway(port);
+      res.json(result);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+  });
+
+  app.post('/api/gateway/stop', authMiddleware({ scopes: ['*'] }), (req, res) => {
+    tunnel.stopGateway();
+    res.json({ ok: true });
+  });
+
+  app.get('/api/gateway/connections', authMiddleware({ required: true }), (req, res) => {
+    const { gateway } = require('./gateway');
+    res.json(gateway.getConnections());
+  });
+
   app.use(express.static(path.join(__dirname, '..', 'public')));
   app.use('/reports', express.static(REPORTS_DIR));
 

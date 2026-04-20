@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 import '../services/api_client.dart';
 import '../services/settings_service.dart';
 import '../theme.dart';
@@ -17,6 +19,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
   final _codeCtl = TextEditingController();
   bool _busy = false;
   String? _error;
+  String _connectionMode = 'auto'; // 'auto', 'ws', 'http'
 
   @override
   void dispose() {
@@ -25,10 +28,102 @@ class _ConnectScreenState extends State<ConnectScreen> {
     super.dispose();
   }
 
-  Future<void> _consume(String baseUrl, String code) async {
+  /// Connect via WebSocket pairing code flow
+  Future<void> _consumeViaWebSocket(String wsUrl, String code) async {
+    setState(() { _busy = true; _error = null; });
+
+    String normalizedUrl = wsUrl;
+    if (!normalizedUrl.startsWith('ws://') && !normalizedUrl.startsWith('wss://')) {
+      normalizedUrl = 'ws://$normalizedUrl';
+    }
+
+    try {
+      if (code.isEmpty) throw Exception('Введите код сопряжения');
+
+      final channel = WebSocketChannel.connect(Uri.parse(normalizedUrl));
+      final completer = Completer<Map<String, dynamic>>();
+
+      // Set a timeout
+      final timeout = Timer(const Duration(seconds: 15), () {
+        if (!completer.isCompleted) {
+          completer.completeError(Exception('Таймаут подключения'));
+        }
+      });
+
+      // Listen for auth_result
+      channel.stream.listen(
+        (message) {
+          try {
+            final data = jsonDecode(message) as Map<String, dynamic>;
+            if (data['type'] == 'welcome') {
+              // Send auth message after welcome
+              channel.sink.add(jsonEncode({
+                'type': 'auth',
+                'code': code,
+              }));
+              return;
+            }
+            if (data['type'] == 'auth_result' && !completer.isCompleted) {
+              if (data['success'] == true) {
+                completer.complete(data);
+              } else {
+                completer.completeError(Exception(data['error'] ?? 'Ошибка аутентификации'));
+              }
+            }
+          } catch (e) {
+            if (!completer.isCompleted) {
+              completer.completeError(Exception('Неверный ответ сервера'));
+            }
+          }
+        },
+        onError: (error) {
+          if (!completer.isCompleted) {
+            completer.completeError(Exception('Ошибка WebSocket: $error'));
+          }
+        },
+        onDone: () {
+          if (!completer.isCompleted) {
+            completer.completeError(Exception('Соединение закрыто'));
+          }
+        },
+      );
+
+      final result = await completer.future;
+      timeout.cancel();
+
+      final apiKey = result['api_key']?.toString();
+      if (apiKey == null || apiKey.isEmpty) {
+        throw Exception('Сервер не вернул API key');
+      }
+
+      // Derive HTTP base URL from WS URL
+      final httpBase = normalizedUrl
+          .replaceFirst('wss://', 'https://')
+          .replaceFirst('ws://', 'http://')
+          .replaceFirst(RegExp(r':\d+(/.*)?$'), ''); // Remove port for HTTP
+
+      // Save credentials — store WS URL for future use
+      await SettingsService.instance.save(
+        baseUrl: httpBase.isNotEmpty ? httpBase : normalizedUrl,
+        apiKey: apiKey,
+      );
+      await SettingsService.instance.saveWsUrl(normalizedUrl);
+
+      // Close WS (we'll reconnect later for real-time events)
+      await channel.sink.close();
+
+      if (mounted) context.go('/dashboard');
+    } catch (e) {
+      setState(() { _error = e.toString().replaceFirst('Exception: ', ''); });
+    } finally {
+      if (mounted) setState(() { _busy = false; });
+    }
+  }
+
+  /// Connect via HTTP pairing code flow (original)
+  Future<void> _consumeViaHttp(String baseUrl, String code) async {
     setState(() { _busy = true; _error = null; });
     try {
-      // Validate URL has a scheme
       if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
         throw Exception('URL должен начинаться с http:// или https://');
       }
@@ -46,6 +141,22 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
   }
 
+  /// Auto-detect connection type and connect
+  Future<void> _connect(String input, String code) async {
+    if (input.startsWith('ws://') || input.startsWith('wss://')) {
+      await _consumeViaWebSocket(input, code);
+    } else if (input.startsWith('http://') || input.startsWith('https://')) {
+      await _consumeViaHttp(input, code);
+    } else {
+      // Try as LAN IP — default to WebSocket
+      if (_connectionMode == 'http') {
+        await _consumeViaHttp('http://$input', code);
+      } else {
+        await _consumeViaWebSocket('ws://$input', code);
+      }
+    }
+  }
+
   Future<void> _scan() async {
     final result = await Navigator.of(context).push<String>(MaterialPageRoute(
       builder: (_) => _QrScannerScreen(),
@@ -54,9 +165,19 @@ class _ConnectScreenState extends State<ConnectScreen> {
     try {
       final data = jsonDecode(result) as Map<String, dynamic>;
       final base = data['base']?.toString() ?? '';
+      final wsUrl = data['ws']?.toString() ?? '';
       final code = data['code']?.toString() ?? '';
-      if (base.isEmpty || code.isEmpty) throw Exception('QR без base/code');
-      await _consume(base, code);
+
+      if (code.isEmpty) throw Exception('QR без кода сопряжения');
+
+      // Prefer WebSocket URL if available
+      if (wsUrl.isNotEmpty) {
+        await _consumeViaWebSocket(wsUrl, code);
+      } else if (base.isNotEmpty) {
+        await _consumeViaHttp(base, code);
+      } else {
+        throw Exception('QR без адреса сервера');
+      }
     } catch (e) {
       setState(() { _error = 'Неверный QR: ${e.toString().replaceFirst('Exception: ', '')}'; });
     }
@@ -109,7 +230,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: AegisColors.textPrimary, fontFamily: 'Inter')),
                 const SizedBox(height: 8),
-                const Text('На ПК откройте вкладку «Мобильный доступ» и создайте код сопряжения',
+                const Text('На ПК откройте вкладку «Мобильный доступ» и запустите локальный шлюз',
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 13, color: AegisColors.textTertiary, fontFamily: 'Inter', height: 1.5)),
                 const SizedBox(height: 28),
@@ -134,6 +255,36 @@ class _ConnectScreenState extends State<ConnectScreen> {
                 ]),
                 const SizedBox(height: 20),
 
+                // Connection mode selector
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AegisColors.bgCard.withOpacity(0.5),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AegisColors.border),
+                  ),
+                  child: Row(
+                    children: [
+                      _ModeChip(
+                        label: 'Авто',
+                        selected: _connectionMode == 'auto',
+                        onTap: () => setState(() { _connectionMode = 'auto'; }),
+                      ),
+                      _ModeChip(
+                        label: 'WebSocket',
+                        selected: _connectionMode == 'ws',
+                        onTap: () => setState(() { _connectionMode = 'ws'; }),
+                      ),
+                      _ModeChip(
+                        label: 'HTTP',
+                        selected: _connectionMode == 'http',
+                        onTap: () => setState(() { _connectionMode = 'http'; }),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+
                 // Form card
                 Container(
                   padding: const EdgeInsets.all(18),
@@ -149,10 +300,16 @@ class _ConnectScreenState extends State<ConnectScreen> {
                         controller: _baseCtl,
                         keyboardType: TextInputType.url,
                         autocorrect: false,
-                        decoration: const InputDecoration(
-                          labelText: 'URL сервера',
-                          hintText: 'https://example.com',
-                          prefixIcon: Icon(Icons.link_rounded),
+                        decoration: InputDecoration(
+                          labelText: _connectionMode == 'http' ? 'URL сервера' : 'Адрес сервера',
+                          hintText: _connectionMode == 'http'
+                              ? 'https://example.com'
+                              : _connectionMode == 'ws'
+                                  ? 'ws://192.168.1.100:18091'
+                                  : '192.168.1.100:18091',
+                          prefixIcon: Icon(
+                            _connectionMode == 'http' ? Icons.link_rounded : Icons.wifi_rounded,
+                          ),
                         ),
                       ),
                       const SizedBox(height: 12),
@@ -171,10 +328,13 @@ class _ConnectScreenState extends State<ConnectScreen> {
                       SizedBox(
                         height: 48,
                         child: FilledButton.icon(
-                          onPressed: _busy ? null : () => _consume(_baseCtl.text.trim(), _codeCtl.text.trim()),
+                          onPressed: _busy ? null : () => _connect(_baseCtl.text.trim(), _codeCtl.text.trim()),
                           icon: _busy
                               ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                              : const Icon(Icons.login_rounded, size: 18),
+                              : Icon(
+                                  _connectionMode == 'http' ? Icons.login_rounded : Icons.cable_rounded,
+                                  size: 18,
+                                ),
                           label: Text(_busy ? 'Подключение...' : 'Подключиться'),
                         ),
                       ),
@@ -218,10 +378,44 @@ class _ConnectScreenState extends State<ConnectScreen> {
 
                 const SizedBox(height: 24),
                 const Center(
-                  child: Text('v1.1.0 • AegisOps Mobile',
+                  child: Text('v1.2.0 • AegisOps Mobile',
                     style: TextStyle(fontSize: 11, color: AegisColors.textTertiary, fontFamily: 'Inter')),
                 ),
               ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ModeChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  const _ModeChip({required this.label, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          decoration: BoxDecoration(
+            color: selected ? AegisColors.accentBlue.withOpacity(0.2) : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            label,
+            style: TextStyle(
+              color: selected ? AegisColors.accentBlue : AegisColors.textTertiary,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              fontSize: 12,
+              fontFamily: 'Inter',
             ),
           ),
         ),

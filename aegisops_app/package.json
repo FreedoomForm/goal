@@ -7,6 +7,7 @@
     "start": "electron .",
     "server": "node server/standalone.js",
     "server:lan": "cross-env BIND=0.0.0.0 node server/standalone.js",
+    "server:gateway": "cross-env BIND=0.0.0.0 GATEWAY=1 node server/standalone.js",
     "server:public": "cross-env BIND=0.0.0.0 AEGISOPS_TUNNEL=cloudflared node server/standalone.js",
     "test": "jest --runInBand --forceExit",
     "lint": "eslint server public/js --ext .js",
@@ -24,8 +25,8 @@
   "license": "MIT",
   "dependencies": {
     "cors": "^2.8.5",
-    "cross-env": "^7.0.3",
     "cron-parser": "^4.9.0",
+    "cross-env": "^7.0.3",
     "express": "^4.21.0",
     "kafkajs": "^2.2.4",
     "marked": "^15.0.0",
@@ -35,7 +36,8 @@
     "pg": "^8.13.0",
     "qrcode": "^1.5.4",
     "sql.js": "^1.11.0",
-    "uuid": "^10.0.0"
+    "uuid": "^10.0.0",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "electron": "^33.0.0",
@@ -48,7 +50,9 @@
     "appId": "com.aegisops.localai",
     "productName": "AegisOps Local AI",
     "forceCodeSigning": false,
-    "directories": { "output": "dist" },
+    "directories": {
+      "output": "dist"
+    },
     "files": [
       "**/*",
       "!dist/**",
@@ -57,8 +61,18 @@
     ],
     "win": {
       "target": [
-        { "target": "nsis", "arch": ["x64"] },
-        { "target": "portable", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "icon": "assets/icon.ico",
       "artifactName": "AegisOps-LocalAI-${version}-${arch}.${ext}",
@@ -73,8 +87,18 @@
     },
     "linux": {
       "target": [
-        { "target": "AppImage", "arch": ["x64"] },
-        { "target": "deb", "arch": ["x64"] }
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "category": "Development;Office;Utility",
       "icon": "assets/icon.png",
@@ -87,7 +111,11 @@
       }
     },
     "deb": {
-      "depends": ["libglib2.0-0", "libsecret-1-0", "libx11-6"]
+      "depends": [
+        "libglib2.0-0",
+        "libsecret-1-0",
+        "libx11-6"
+      ]
     },
     "mac": {
       "target": "dmg",
