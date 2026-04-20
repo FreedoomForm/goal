@@ -78,8 +78,8 @@ router.delete('/keys/:id', authMiddleware({ scopes: ['*'] }), async (req, res) =
   }
 });
 
-/* Pairing: generate short-lived code for mobile */
-const pairingCodes = new Map(); // code -> { apiKey, expiresAt }
+/* Pairing: generate short-lived code for mobile — uses shared store */
+const { pairingCodes } = require('../pairing-store');
 
 router.post('/pair/request', authMiddleware({ scopes: ['*'] }), async (req, res) => {
   try {

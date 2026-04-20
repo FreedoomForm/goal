@@ -19,23 +19,24 @@ const { gateway, getLanIPs, generatePairingCode } = require('./gateway');
 
 let current = null; // { provider, url, proc }
 
-function setPublicUrl(url, provider = 'manual') {
-  runSQL('INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)',
+async function setPublicUrl(url, provider = 'manual') {
+  await runSQL('INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)',
     ['public_base_url', url, nowISO()]);
-  runSQL('INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)',
+  await runSQL('INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)',
     ['public_provider', provider, nowISO()]);
 }
 
-function getPublicUrl() {
-  return queryOne("SELECT value FROM settings WHERE key='public_base_url'")?.value || '';
+async function getPublicUrl() {
+  const row = await queryOne("SELECT value FROM settings WHERE key='public_base_url'");
+  return row?.value || '';
 }
 
-function status() {
+async function status() {
   const gw = gateway.getStatus();
   return {
     active: !!current,
     provider: current?.provider || null,
-    url: current?.url || getPublicUrl(),
+    url: current?.url || (await getPublicUrl()),
     gateway: gw,
   };
 }
@@ -63,16 +64,22 @@ function getGatewayStatus() {
 async function startCloudflared(port) {
   return new Promise((resolve, reject) => {
     const cmd = process.platform === 'win32' ? 'cloudflared.exe' : 'cloudflared';
-    const proc = spawn(cmd, ['tunnel', '--url', `http://127.0.0.1:${port}`, '--no-autoupdate'], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    let proc;
+    try {
+      proc = spawn(cmd, ['tunnel', '--url', `http://127.0.0.1:${port}`, '--no-autoupdate'], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (err) {
+      return reject(new Error(`Failed to start cloudflared: ${err.message}. Make sure cloudflared is installed and in PATH.`));
+    }
+
     let settled = false;
     const settle = (err, url) => {
       if (settled) return;
       settled = true;
       err ? reject(err) : resolve(url);
     };
-    const t = setTimeout(() => settle(new Error('cloudflared timeout')), 30_000);
+    const t = setTimeout(() => settle(new Error('cloudflared timeout (30s). Is cloudflared installed and accessible?')), 30_000);
 
     const onData = buf => {
       const text = String(buf);
@@ -80,15 +87,21 @@ async function startCloudflared(port) {
       if (m) {
         clearTimeout(t);
         current = { provider: 'cloudflared', url: m[0], proc };
-        setPublicUrl(m[0], 'cloudflared');
+        setPublicUrl(m[0], 'cloudflared').catch(() => {});
         log.info('tunnel.cloudflared_up', { url: m[0] });
         settle(null, m[0]);
       }
     };
     proc.stdout.on('data', onData);
     proc.stderr.on('data', onData);
-    proc.on('error', err => { clearTimeout(t); settle(err); });
-    proc.on('exit', code => { log.info('tunnel.cloudflared_exit', { code }); if (current?.provider === 'cloudflared') current = null; });
+    proc.on('error', err => {
+      clearTimeout(t);
+      settle(new Error(`cloudflared binary not found or failed to start: ${err.message}. Install from https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/`));
+    });
+    proc.on('exit', code => {
+      log.info('tunnel.cloudflared_exit', { code });
+      if (current?.provider === 'cloudflared') current = null;
+    });
   });
 }
 
@@ -108,7 +121,7 @@ async function startNgrok(port) {
       if (m && !settled) {
         settled = true; clearTimeout(t);
         current = { provider: 'ngrok', url: m[1], proc };
-        setPublicUrl(m[1], 'ngrok');
+        setPublicUrl(m[1], 'ngrok').catch(() => {});
         log.info('tunnel.ngrok_up', { url: m[1] });
         resolve(m[1]);
       }
@@ -142,6 +155,5 @@ async function stop() {
 
 module.exports = {
   start, stop, status, setPublicUrl, getPublicUrl,
-  // Gateway methods
   startGateway, stopGateway, getGatewayStatus, getLanIPs, generatePairingCode,
 };

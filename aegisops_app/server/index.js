@@ -225,7 +225,9 @@ function createApp() {
   app.use('/api/ai', aiEngineRoutes);
 
   // Tunnel management
-  app.get('/api/tunnel/status', authMiddleware({ required: true }), (req, res) => res.json(tunnel.status()));
+  app.get('/api/tunnel/status', authMiddleware({ required: true }), async (req, res) => {
+    res.json(await tunnel.status());
+  });
   app.post('/api/tunnel/start', authMiddleware({ scopes: ['*'] }), async (req, res) => {
     try {
       const port = parseInt(req.body?.port || process.env.PORT || 18090);
@@ -238,10 +240,10 @@ function createApp() {
     await tunnel.stop();
     res.json({ ok: true });
   });
-  app.post('/api/tunnel/manual', authMiddleware({ scopes: ['*'] }), (req, res) => {
+  app.post('/api/tunnel/manual', authMiddleware({ scopes: ['*'] }), async (req, res) => {
     const { url } = req.body || {};
     if (!url) return res.status(400).json({ error: 'url required' });
-    tunnel.setPublicUrl(url, 'manual');
+    await tunnel.setPublicUrl(url, 'manual');
     res.json({ ok: true, url });
   });
 
@@ -294,7 +296,7 @@ function createApp() {
       const httpBaseUrl = `http://${primaryIP}:${expressPort}`;
       
       // Include tunnel URL if available
-      const tunnelStatus = tunnel.status();
+      const tunnelStatus = await tunnel.status();
       const tunnelUrl = tunnelStatus.url || '';
       
       res.json({

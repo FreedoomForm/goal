@@ -24,7 +24,7 @@ const { log } = require('./middleware/logger');
 const { TOPICS } = require('./events/kafka');
 
 /* ─── Pairing code store (shared with auth routes) ─── */
-const pairingCodes = new Map(); // code -> { apiKey, label, expiresAt }
+const { pairingCodes } = require('./pairing-store');
 
 /**
  * Generate a 6-digit pairing code with 5-minute TTL.

@@ -66,6 +66,7 @@
   position: relative;
   display: flex;
   flex-direction: column;
+  min-height: 500px;
 }
 
 .wf-meta {
@@ -85,9 +86,20 @@
   font-size: 13px;
 }
 
-.wf-canvas-host { flex: 1; position: relative; }
+.wf-canvas-host {
+  flex: 1;
+  position: relative;
+  min-height: 400px;
+  overflow: hidden;
+}
 
-.wf-canvas-root { position: relative; width: 100%; height: 100%; overflow: hidden; }
+.wf-canvas-root {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
 
 .wf-toolbar {
   position: absolute;
@@ -117,10 +129,11 @@
 .wf-zoom-label { color: #8ea1c9; font-size: 12px; padding: 0 6px; }
 
 .wf-viewport {
-  position: absolute; inset: 0;
+  position: absolute;
+  inset: 0;
   cursor: grab;
-  background:
-    linear-gradient(#0a1226, #0b1428);
+  background: linear-gradient(#0a1226, #0b1428);
+  overflow: hidden;
 }
 .wf-grid {
   position: absolute; inset: 0;

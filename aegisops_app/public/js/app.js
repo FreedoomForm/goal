@@ -150,12 +150,12 @@ async function renderPage(page) {
       case 'dashboard': await renderDashboard(container); break;
       case 'connectors': await renderConnectors(container); break;
       case 'scenarios': await renderScenarios(container); break;
-      case 'schedules': await renderSchedules(container); break;
+      case 'schedules': await window.renderPlanningPage(container); break; // merged into Планирование
       case 'modules': await renderModules(container); break;
       case 'ai-engine': await renderAIEngine(container); break;
-      case 'assistant': await renderAssistantEnhanced(container); break;
+      case 'assistant': await renderAIEngine(container); break; // merged into AI Движок
       case 'documents': await renderDocuments(container); break;
-      case 'training': await renderTraining(container); break;
+      case 'training': await renderAIEngine(container); break; // merged into AI Движок
       case 'etl': await renderETL(container); break;
       case 'guide': await window.renderGuidePage(container); break;
       case 'audit': await renderAudit(container); break;

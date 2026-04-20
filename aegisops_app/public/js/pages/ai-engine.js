@@ -388,6 +388,43 @@ async function renderAIEngine(container) {
         </div>
       </div>
     </div>
+
+    <!-- Inline AI Chat (merged from AI Ассистент) -->
+    <div class="card mb-24">
+      <div class="card-header">
+        <div>
+          <div class="card-title">💬 AI Чат</div>
+          <div class="card-subtitle">Общайтесь с AI напрямую. История сохраняется в текущей сессии.</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="font-size:12px;color:#8ea1c9">Модель:</span>
+          <select class="form-select" id="chatModelSelect" style="width:200px;font-size:12px;padding:6px 8px">
+            <optgroup label="🖥️ Локальные">
+              ${localModels.map(m => `<option value="${escapeHtml(m.name)}" data-provider="local" ${m.name === status.activeModel && status.activeProvider !== 'cloud' && status.activeProvider !== 'ollama-cloud' ? 'selected' : ''}>🖥️ ${escapeHtml(m.name)}</option>`).join('')}
+            </optgroup>
+            <optgroup label="☁️ Облачные">
+              ${cloudModels.map(m => `<option value="${escapeHtml(m.name)}" data-provider="cloud">☁️ ${escapeHtml(m.name)}</option>`).join('')}
+            </optgroup>
+            <optgroup label="🌐 Ollama Cloud (Official)">
+              ${ollamaCloudModels.map(m => `<option value="${escapeHtml(m.name)}" data-provider="ollama-cloud">🌐 ${escapeHtml(m.name)}</option>`).join('')}
+              ${ollamaCloudAvailable.filter(m => m.available).map(m => `<option value="${escapeHtml(m.name)}" data-provider="ollama-cloud">🌐 ${escapeHtml(m.name)}</option>`).join('')}
+            </optgroup>
+          </select>
+          <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:#8ea1c9;cursor:pointer">
+            <input type="checkbox" id="chatStreamToggle" checked style="accent-color:#59a8ff">
+            Потоковый
+          </label>
+          <button class="btn btn-sm" id="btnClearChat">🗑️ Очистить</button>
+        </div>
+      </div>
+      <div id="aiChatMessages" style="max-height:400px;overflow-y:auto;padding:16px;background:#09101d;border-radius:12px;margin:16px 0">
+        ${state.chatHistory.length === 0 ? '<div style="text-align:center;color:#5e6c88;padding:40px 0">Задайте вопрос AI-ассистенту</div>' : state.chatHistory.map(msg => renderChatMessage(msg)).join('')}
+      </div>
+      <div style="display:flex;gap:8px;padding:0 16px 16px 16px">
+        <input class="form-input" id="aiChatInput" placeholder="Введите сообщение..." style="flex:1" />
+        <button class="btn btn-primary" id="btnSendChat">Отправить</button>
+      </div>
+    </div>
   `;
 
   // Event bindings
@@ -755,6 +792,113 @@ async function renderAIEngine(container) {
         btn.textContent = '📥 Скачать';
       }
     });
+  });
+
+  // ─── Inline AI Chat handlers ───
+  $('btnClearChat')?.addEventListener('click', () => {
+    state.chatHistory = [];
+    const chatEl = $('aiChatMessages');
+    if (chatEl) chatEl.innerHTML = '<div style="text-align:center;color:#5e6c88;padding:40px 0">Задайте вопрос AI-ассистенту</div>';
+  });
+
+  const sendChatMessage = async () => {
+    const input = $('aiChatInput');
+    const msg = input?.value?.trim();
+    if (!msg) return;
+    input.value = '';
+
+    const chatEl = $('aiChatMessages');
+    if (!chatEl) return;
+
+    // Add user message
+    state.chatHistory.push({ role: 'user', content: msg });
+    chatEl.innerHTML += renderChatMessage({ role: 'user', content: msg });
+    chatEl.scrollTop = chatEl.scrollHeight;
+
+    // Get selected model/provider
+    const modelSelect = $('chatModelSelect');
+    const selectedModel = modelSelect?.value || '';
+    const selectedProvider = modelSelect?.selectedOptions?.[0]?.dataset?.provider || 'local';
+    const useStream = $('chatStreamToggle')?.checked;
+
+    // Add AI placeholder
+    const aiMsg = { role: 'ai', content: '', provider: selectedProvider, model: selectedModel, isStreaming: true };
+    state.chatHistory.push(aiMsg);
+    const aiMsgIndex = state.chatHistory.length - 1;
+    chatEl.innerHTML += renderChatMessage(aiMsg);
+    chatEl.scrollTop = chatEl.scrollHeight;
+
+    if (useStream) {
+      try {
+        const res = await fetch('/api/assistant/stream', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: msg, model: selectedModel, provider: selectedProvider }),
+        });
+        const reader = res.body;
+        let fullContent = '';
+        reader.on('data', (chunk) => {
+          try {
+            const lines = chunk.toString().split('\n').filter(l => l.trim());
+            for (const line of lines) {
+              if (line.startsWith('event: ') || line.startsWith('data: ')) {
+                const dataLine = line.startsWith('data: ') ? line.slice(6) : null;
+                if (!dataLine) continue;
+                const data = JSON.parse(dataLine);
+                if (data.content && !data.done) {
+                  fullContent += data.content;
+                  state.chatHistory[aiMsgIndex].content = fullContent;
+                  // Update last chat bubble
+                  const bubbles = chatEl.querySelectorAll('.ai-content pre');
+                  const lastBubble = bubbles[bubbles.length - 1];
+                  if (lastBubble) lastBubble.textContent = fullContent;
+                  chatEl.scrollTop = chatEl.scrollHeight;
+                }
+                if (data.done) {
+                  fullContent = data.content || fullContent;
+                  state.chatHistory[aiMsgIndex].content = fullContent;
+                  state.chatHistory[aiMsgIndex].isStreaming = false;
+                  state.chatHistory[aiMsgIndex].provider = data.provider || selectedProvider;
+                  state.chatHistory[aiMsgIndex].model = data.model || selectedModel;
+                }
+              }
+            }
+          } catch {}
+        });
+        reader.on('end', () => {
+          state.chatHistory[aiMsgIndex].isStreaming = false;
+        });
+      } catch (err) {
+        state.chatHistory[aiMsgIndex].content = 'Ошибка: ' + err.message;
+        state.chatHistory[aiMsgIndex].isStreaming = false;
+      }
+    } else {
+      try {
+        const result = await api('/api/assistant', {
+          method: 'POST',
+          body: JSON.stringify({ prompt: msg, model: selectedModel, provider: selectedProvider }),
+        });
+        state.chatHistory[aiMsgIndex].content = result.content;
+        state.chatHistory[aiMsgIndex].provider = result.provider;
+        state.chatHistory[aiMsgIndex].model = result.model;
+        state.chatHistory[aiMsgIndex].isStreaming = false;
+        const bubbles = chatEl.querySelectorAll('.ai-content pre');
+        const lastBubble = bubbles[bubbles.length - 1];
+        if (lastBubble) lastBubble.textContent = result.content;
+        chatEl.scrollTop = chatEl.scrollHeight;
+      } catch (err) {
+        state.chatHistory[aiMsgIndex].content = 'Ошибка: ' + err.message;
+        state.chatHistory[aiMsgIndex].isStreaming = false;
+      }
+    }
+  };
+
+  $('btnSendChat')?.addEventListener('click', sendChatMessage);
+  $('aiChatInput')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendChatMessage();
+    }
   });
 }
 
