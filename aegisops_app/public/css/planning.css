@@ -360,6 +360,10 @@
   z-index: 1000;
   display: flex; align-items: center; justify-content: center;
 }
+/* ВАЖНО: hidden атрибут должен работать! */
+.wf-guide-overlay[hidden] {
+  display: none !important;
+}
 .wf-guide-card {
   background: #0f1830;
   border: 1px solid #24304e;
