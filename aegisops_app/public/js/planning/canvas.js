@@ -1,306 +1,305 @@
 /**
- * AegisOps — Node-based Workflow Canvas (vanilla JS, no React).
- * Provides n8n-style UX: draggable nodes, curved wires, zoom/pan, inspector.
+ * AegisOps WorkflowCanvas v3 — Ground-up rewrite.
  *
- * The canvas emits events and exposes `exportGraph()` / `importGraph()`
- * so the rest of the SPA can save/load/run graphs via /api/workflows.
+ * Anti-blur measures for Windows Electron:
+ *   - All coordinates are Math.round()'d before applying as CSS left/top/transform
+ *   - SVG paths use rounded coordinates
+ *   - No CSS filter, no backdrop-filter, no alpha compositing tricks
+ *   - transform: translate() values are always integers
+ *   - Canvas host size is set via JS with explicit pixel values
  */
 (function () {
   'use strict';
 
   const SVG_NS = 'http://www.w3.org/2000/svg';
+  const NODE_W = 200;
+  const PORT_OFF_OUT = NODE_W;
+  const PORT_Y_OFF = 20;
 
-  class Canvas {
-    constructor(root, { onChange, onOpenInspector, onRunPreview } = {}) {
-      this.root = root;
-      this.onChange = onChange || (() => {});
-      this.onOpenInspector = onOpenInspector || (() => {});
-      this.onRunPreview = onRunPreview;
-      this.nodes = new Map();   // id -> { id, type, label, icon, params, x, y, el }
-      this.edges = [];          // [{ from, to, el }]
-      this.scale = 1;
-      this.offset = { x: 0, y: 0 };
-      this.nextId = 1;
-      this.dragState = null;
-      this.connectState = null;
-      this.selectedId = null;
+  class WorkflowCanvas {
+    constructor(hostEl, opts) {
+      this.host = hostEl;
+      this.onChange = opts.onChange || (() => {});
+      this.onOpenInspector = opts.onOpenInspector || (() => {});
+      this.onRunPreview = opts.onRunPreview || null;
 
-      this._build();
-      this._attach();
+      this.nodes = new Map();
+      this.edges = [];
+      this._nid = 1;
+      this._scale = 1;
+      this._ox = 0;
+      this._oy = 0;
+      this._drag = null;
+      this._wire = null;
+      this._pan = null;
+      this._selId = null;
+
+      this._buildDOM();
+      this._bindEvents();
     }
 
-    _build() {
-      this.root.classList.add('wf-canvas-root');
-      this.root.innerHTML = `
-        <div class="wf-toolbar">
-          <button class="wf-btn" data-action="fit">🎯 Центр</button>
-          <button class="wf-btn" data-action="zoom-in">➕</button>
-          <button class="wf-btn" data-action="zoom-out">➖</button>
-          <button class="wf-btn" data-action="clear">🗑️ Очистить</button>
-          <button class="wf-btn wf-btn-primary" data-action="run">▶️ Запустить</button>
-          <span class="wf-zoom-label"></span>
-        </div>
-        <div class="wf-viewport">
-          <svg class="wf-edges" xmlns="${SVG_NS}"></svg>
-          <div class="wf-nodes"></div>
-          <div class="wf-grid"></div>
-        </div>
-      `;
-      this.viewport = this.root.querySelector('.wf-viewport');
-      this.nodesLayer = this.root.querySelector('.wf-nodes');
-      this.edgesLayer = this.root.querySelector('.wf-edges');
-      this.zoomLabel = this.root.querySelector('.wf-zoom-label');
+    /* ── DOM construction ── */
+
+    _buildDOM() {
+      this.host.innerHTML = '';
+
+      // Toolbar
+      this._toolbar = this._el('div', 'wf-canvas-toolbar');
+      this._toolbar.innerHTML =
+        btn('🎯 Центр', 'fit') + btn('➕', 'zoom-in') + btn('➖', 'zoom-out') +
+        btn('🗑️', 'clear') +
+        (this.onRunPreview ? '<button class="wf-tb-btn wf-tb-primary" data-act="run">▶ Запустить</button>' : '') +
+        '<span class="wf-tb-zoom"></span>';
+      this.host.appendChild(this._toolbar);
+
+      // Viewport
+      this._vp = this._el('div', 'wf-viewport');
+      this.host.appendChild(this._vp);
+
+      // SVG edges layer
+      this._edgesLayer = this._el('div', 'wf-edges-layer');
+      const svg = document.createElementNS(SVG_NS, 'svg');
+      svg.setAttribute('width', '100%');
+      svg.setAttribute('height', '100%');
+      this._svg = svg;
+      // Arrow marker
+      const defs = document.createElementNS(SVG_NS, 'defs');
+      const marker = document.createElementNS(SVG_NS, 'marker');
+      marker.setAttribute('id', 'wf-arr');
+      marker.setAttribute('viewBox', '0 0 10 10');
+      marker.setAttribute('refX', '9');
+      marker.setAttribute('refY', '5');
+      marker.setAttribute('markerWidth', '6');
+      marker.setAttribute('markerHeight', '6');
+      marker.setAttribute('orient', 'auto-start-reverse');
+      const arrowPath = document.createElementNS(SVG_NS, 'path');
+      arrowPath.setAttribute('d', 'M0 0 L10 5 L0 10 z');
+      arrowPath.setAttribute('fill', '#3366cc');
+      marker.appendChild(arrowPath);
+      defs.appendChild(marker);
+      svg.appendChild(defs);
+      this._edgesGroup = document.createElementNS(SVG_NS, 'g');
+      svg.appendChild(this._edgesGroup);
+      this._edgesLayer.appendChild(svg);
+      this._vp.appendChild(this._edgesLayer);
+
+      // Nodes layer
+      this._nodesLayer = this._el('div', 'wf-nodes-layer');
+      this._vp.appendChild(this._nodesLayer);
+
+      // Dot grid
+      const grid = this._el('div', 'wf-dot-grid');
+      this._vp.appendChild(grid);
+
       this._applyTransform();
     }
 
-    _attach() {
-      this.root.querySelector('[data-action="fit"]').onclick = () => this.fit();
-      this.root.querySelector('[data-action="zoom-in"]').onclick = () => this.setScale(this.scale * 1.2);
-      this.root.querySelector('[data-action="zoom-out"]').onclick = () => this.setScale(this.scale / 1.2);
-      this.root.querySelector('[data-action="clear"]').onclick = () => {
-        if (confirm('Очистить весь workflow?')) { this.clear(); this.onChange(); }
-      };
-      this.root.querySelector('[data-action="run"]').onclick = () => this.onRunPreview && this.onRunPreview();
+    /* ── Event binding ── */
 
-      // Pan with middle-mouse / space+drag / background drag
-      let panning = null;
-      this.viewport.addEventListener('mousedown', e => {
-        if (e.target === this.viewport || e.target.classList.contains('wf-grid') || e.target.classList.contains('wf-edges')) {
-          panning = { x: e.clientX, y: e.clientY, ox: this.offset.x, oy: this.offset.y };
-          this.viewport.style.cursor = 'grabbing';
+    _bindEvents() {
+      // Toolbar
+      this._toolbar.addEventListener('click', (e) => {
+        const act = e.target.dataset.act || e.target.closest('[data-act]')?.dataset.act;
+        if (!act) return;
+        if (act === 'fit') this.fit();
+        else if (act === 'zoom-in') this.setScale(this._scale * 1.25);
+        else if (act === 'zoom-out') this.setScale(this._scale / 1.25);
+        else if (act === 'clear') { if (confirm('Очистить весь workflow?')) { this.clear(); this.onChange(); } }
+        else if (act === 'run' && this.onRunPreview) this.onRunPreview();
+      });
+
+      // Pan + drag + wire
+      this._vp.addEventListener('mousedown', (e) => {
+        const portEl = e.target.closest('.wf-port');
+        const nodeEl = e.target.closest('.wf-node');
+        const isBg = !portEl && !nodeEl;
+
+        if (portEl && portEl.classList.contains('wf-port-out')) {
+          const nd = this._nodeFromEl(nodeEl);
+          if (!nd) return;
+          e.stopPropagation();
+          this._wire = { fromId: nd.id, tmp: this._makeTempPath() };
+          return;
+        }
+
+        if (isBg) {
+          this._pan = { sx: e.clientX, sy: e.clientY, ox: this._ox, oy: this._oy };
           this._deselect();
+          return;
         }
-      });
-      window.addEventListener('mousemove', e => {
-        if (panning) {
-          this.offset.x = panning.ox + (e.clientX - panning.x);
-          this.offset.y = panning.oy + (e.clientY - panning.y);
-          this._applyTransform();
+
+        if (nodeEl) {
+          const nd = this._nodeFromEl(nodeEl);
+          if (!nd) return;
+          this._select(nd.id);
+          const r = this._vp.getBoundingClientRect();
+          this._drag = {
+            id: nd.id,
+            dx: (e.clientX - r.left - this._ox) / this._scale - nd.x,
+            dy: (e.clientY - r.top  - this._oy) / this._scale - nd.y,
+          };
         }
-        if (this.dragState) this._onNodeDrag(e);
-        if (this.connectState) this._onConnectDrag(e);
-      });
-      window.addEventListener('mouseup', e => {
-        panning = null; this.viewport.style.cursor = '';
-        if (this.dragState) { this.dragState = null; this.onChange(); }
-        if (this.connectState) this._onConnectEnd(e);
       });
 
-      // Zoom on wheel
-      this.viewport.addEventListener('wheel', e => {
+      window.addEventListener('mousemove', (e) => this._onMove(e));
+      window.addEventListener('mouseup', (e) => this._onUp(e));
+
+      // Zoom
+      this._vp.addEventListener('wheel', (e) => {
         e.preventDefault();
-        const delta = -e.deltaY * 0.001;
-        this.setScale(Math.max(0.3, Math.min(2.5, this.scale + delta)));
+        const d = -e.deltaY * 0.001;
+        this.setScale(Math.max(0.2, Math.min(2.5, this._scale + d)));
       }, { passive: false });
 
       // Drop from palette
-      this.viewport.addEventListener('dragover', e => e.preventDefault());
-      this.viewport.addEventListener('drop', e => {
+      this._vp.addEventListener('dragover', (e) => e.preventDefault());
+      this._vp.addEventListener('drop', (e) => {
         e.preventDefault();
         const raw = e.dataTransfer.getData('application/aegisops-node');
         if (!raw) return;
-        const tpl = JSON.parse(raw);
-        const rect = this.viewport.getBoundingClientRect();
-        const x = (e.clientX - rect.left - this.offset.x) / this.scale;
-        const y = (e.clientY - rect.top - this.offset.y) / this.scale;
-        this.addNode({ ...tpl, x, y });
-        this.onChange();
+        try {
+          const tpl = JSON.parse(raw);
+          const r = this._vp.getBoundingClientRect();
+          const x = Math.round((e.clientX - r.left - this._ox) / this._scale);
+          const y = Math.round((e.clientY - r.top  - this._oy) / this._scale);
+          this.addNode({ ...tpl, x, y });
+          this.onChange();
+        } catch (err) { console.error('[Canvas] Drop error:', err); }
       });
     }
 
-    _applyTransform() {
-      this.nodesLayer.style.transform = `translate(${this.offset.x}px, ${this.offset.y}px) scale(${this.scale})`;
-      this.edgesLayer.style.transform = `translate(${this.offset.x}px, ${this.offset.y}px) scale(${this.scale})`;
-      this.zoomLabel.textContent = Math.round(this.scale * 100) + '%';
+    _onMove(e) {
+      if (this._pan) {
+        this._ox = this._pan.ox + (e.clientX - this._pan.sx);
+        this._oy = this._pan.oy + (e.clientY - this._pan.sy);
+        this._applyTransform();
+      }
+      if (this._drag) {
+        const r = this._vp.getBoundingClientRect();
+        const nd = this.nodes.get(this._drag.id);
+        if (!nd) return;
+        nd.x = Math.round((e.clientX - r.left - this._ox) / this._scale - this._drag.dx);
+        nd.y = Math.round((e.clientY - r.top  - this._oy) / this._scale - this._drag.dy);
+        nd.el.style.left = nd.x + 'px';
+        nd.el.style.top  = nd.y + 'px';
+        this._drawEdges();
+      }
+      if (this._wire) {
+        const src = this.nodes.get(this._wire.fromId);
+        if (!src) return;
+        const r = this._vp.getBoundingClientRect();
+        const x2 = Math.round((e.clientX - r.left - this._ox) / this._scale);
+        const y2 = Math.round((e.clientY - r.top  - this._oy) / this._scale);
+        this._wire.tmp.setAttribute('d', this._curve(src.x + PORT_OFF_OUT, src.y + PORT_Y_OFF, x2, y2));
+      }
     }
 
-    setScale(s) { this.scale = s; this._applyTransform(); }
+    _onUp(e) {
+      if (this._drag) { this._drag = null; this.onChange(); }
+      if (this._pan) { this._pan = null; }
+      if (this._wire) {
+        const portEl = e.target.closest('.wf-port');
+        const nodeEl = e.target.closest('.wf-node');
+        if (portEl && portEl.classList.contains('wf-port-in') && nodeEl) {
+          const tgt = this._nodeFromEl(nodeEl);
+          if (tgt && tgt.id !== this._wire.fromId) {
+            this.addEdge(this._wire.fromId, tgt.id);
+            this.onChange();
+          }
+        }
+        this._wire.tmp.remove();
+        this._wire = null;
+      }
+    }
+
+    /* ── Public API ── */
 
     addNode({ id, type, label, icon, params = {}, x = 100, y = 100 }) {
-      const nodeId = id || `n${this.nextId++}`;
-      if (id) this.nextId = Math.max(this.nextId, Number(String(id).replace(/\D/g, '')) + 1);
+      const nid = id || ('n' + this._nid++);
+      if (id) this._nid = Math.max(this._nid, parseInt(String(id).replace(/\D/g, '')) + 1);
+
       const el = document.createElement('div');
       el.className = 'wf-node';
-      el.dataset.id = nodeId;
-      el.style.left = x + 'px';
-      el.style.top = y + 'px';
-      el.innerHTML = `
-        <div class="wf-node-header">
-          <span class="wf-node-icon">${icon || '⚙️'}</span>
-          <span class="wf-node-label">${escapeHtml(label || type)}</span>
-          <button class="wf-node-del" title="Удалить">✕</button>
-        </div>
-        <div class="wf-node-type">${escapeHtml(type)}</div>
-        <div class="wf-port wf-port-in" data-port="in" title="Вход"></div>
-        <div class="wf-port wf-port-out" data-port="out" title="Выход"></div>
-      `;
-      this.nodesLayer.appendChild(el);
-      const node = { id: nodeId, type, label: label || type, icon, params, x, y, el };
-      this.nodes.set(nodeId, node);
+      el.dataset.id = nid;
+      el.style.left = Math.round(x) + 'px';
+      el.style.top  = Math.round(y) + 'px';
+      el.innerHTML =
+        `<div class="wf-node-head">` +
+          `<span class="wf-node-ico">${icon || '⚙️'}</span>` +
+          `<span class="wf-node-lbl">${esc(label || type)}</span>` +
+          `<button class="wf-node-del" title="Удалить">✕</button>` +
+        `</div>` +
+        `<div class="wf-node-type">${esc(type)}</div>` +
+        `<div class="wf-port wf-port-in" data-port="in"></div>` +
+        `<div class="wf-port wf-port-out" data-port="out"></div>`;
 
-      el.querySelector('.wf-node-del').onclick = ev => {
-        ev.stopPropagation();
-        this.removeNode(nodeId);
-        this.onChange();
-      };
-      el.addEventListener('mousedown', ev => {
-        if (ev.target.classList.contains('wf-port')) return;
-        if (ev.target.classList.contains('wf-node-del')) return;
-        this._select(nodeId);
-        const rect = this.viewport.getBoundingClientRect();
-        this.dragState = {
-          id: nodeId,
-          dx: (ev.clientX - rect.left - this.offset.x) / this.scale - node.x,
-          dy: (ev.clientY - rect.top - this.offset.y) / this.scale - node.y,
-        };
-      });
-      el.addEventListener('dblclick', () => this.onOpenInspector(this.nodes.get(nodeId)));
+      this._nodesLayer.appendChild(el);
+      const node = { id: nid, type, label: label || type, icon, params, x: Math.round(x), y: Math.round(y), el };
+      this.nodes.set(nid, node);
 
-      // Port interactions for wiring
-      el.querySelector('.wf-port-out').addEventListener('mousedown', ev => {
-        ev.stopPropagation();
-        this.connectState = { fromId: nodeId, tempEl: this._createTempEdge() };
-      });
-      el.querySelector('.wf-port-in').addEventListener('mouseup', ev => {
-        ev.stopPropagation();
-        if (this.connectState && this.connectState.fromId !== nodeId) {
-          this.addEdge(this.connectState.fromId, nodeId);
-          this.onChange();
-        }
-        this._cancelConnect();
-      });
+      el.querySelector('.wf-node-del').onclick = (ev) => { ev.stopPropagation(); this.removeNode(nid); this.onChange(); };
+      el.addEventListener('dblclick', () => this.onOpenInspector(this.nodes.get(nid)));
 
-      this._renderEdges();
+      this._drawEdges();
       return node;
     }
 
     removeNode(id) {
-      const node = this.nodes.get(id);
-      if (!node) return;
-      node.el.remove();
+      const nd = this.nodes.get(id);
+      if (!nd) return;
+      nd.el.remove();
       this.nodes.delete(id);
       this.edges = this.edges.filter(e => e.from !== id && e.to !== id);
-      this._renderEdges();
-      if (this.selectedId === id) this.selectedId = null;
+      if (this._selId === id) this._selId = null;
+      this._drawEdges();
     }
 
     addEdge(from, to) {
+      if (from === to) return;
       if (this.edges.some(e => e.from === from && e.to === to)) return;
-      // Prevent obvious cycles (simple check: no direct back-edge)
       if (this.edges.some(e => e.from === to && e.to === from)) return;
       this.edges.push({ from, to });
-      this._renderEdges();
+      this._drawEdges();
     }
 
     removeEdge(from, to) {
       this.edges = this.edges.filter(e => !(e.from === from && e.to === to));
-      this._renderEdges();
-    }
-
-    _onNodeDrag(ev) {
-      const { id, dx, dy } = this.dragState;
-      const node = this.nodes.get(id);
-      const rect = this.viewport.getBoundingClientRect();
-      node.x = (ev.clientX - rect.left - this.offset.x) / this.scale - dx;
-      node.y = (ev.clientY - rect.top - this.offset.y) / this.scale - dy;
-      node.el.style.left = node.x + 'px';
-      node.el.style.top = node.y + 'px';
-      this._renderEdges();
-    }
-
-    _createTempEdge() {
-      const p = document.createElementNS(SVG_NS, 'path');
-      p.setAttribute('stroke', '#7c5cff');
-      p.setAttribute('stroke-width', '2');
-      p.setAttribute('fill', 'none');
-      p.setAttribute('stroke-dasharray', '4 4');
-      this.edgesLayer.appendChild(p);
-      return p;
-    }
-
-    _onConnectDrag(ev) {
-      const src = this.nodes.get(this.connectState.fromId);
-      if (!src) return;
-      const rect = this.viewport.getBoundingClientRect();
-      const x1 = src.x + 220; const y1 = src.y + 34;
-      const x2 = (ev.clientX - rect.left - this.offset.x) / this.scale;
-      const y2 = (ev.clientY - rect.top - this.offset.y) / this.scale;
-      this.connectState.tempEl.setAttribute('d', this._curve(x1, y1, x2, y2));
-    }
-
-    _onConnectEnd() { this._cancelConnect(); }
-    _cancelConnect() {
-      if (this.connectState?.tempEl) this.connectState.tempEl.remove();
-      this.connectState = null;
-    }
-
-    _curve(x1, y1, x2, y2) {
-      const dx = Math.max(40, Math.abs(x2 - x1) * 0.4);
-      return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
-    }
-
-    _renderEdges() {
-      const defs = `<defs>
-        <marker id="wf-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="#59a8ff"/>
-        </marker>
-      </defs>`;
-      const items = this.edges.map(e => {
-        const a = this.nodes.get(e.from); const b = this.nodes.get(e.to);
-        if (!a || !b) return '';
-        const x1 = a.x + 220, y1 = a.y + 34;
-        const x2 = b.x, y2 = b.y + 34;
-        return `<path d="${this._curve(x1, y1, x2, y2)}" stroke="#59a8ff" stroke-width="2" fill="none"
-                     marker-end="url(#wf-arrow)" class="wf-edge" data-from="${e.from}" data-to="${e.to}"/>`;
-      }).join('');
-      this.edgesLayer.innerHTML = defs + items;
-      // Click edge to remove
-      this.edgesLayer.querySelectorAll('.wf-edge').forEach(p => {
-        p.addEventListener('dblclick', () => {
-          if (confirm('Удалить связь?')) {
-            this.removeEdge(p.dataset.from, p.dataset.to);
-            this.onChange();
-          }
-        });
-      });
-    }
-
-    _select(id) {
-      this._deselect();
-      this.selectedId = id;
-      this.nodes.get(id)?.el.classList.add('selected');
-    }
-    _deselect() {
-      if (this.selectedId) this.nodes.get(this.selectedId)?.el.classList.remove('selected');
-      this.selectedId = null;
+      this._drawEdges();
     }
 
     updateNodeParams(id, params) {
-      const n = this.nodes.get(id);
-      if (!n) return;
-      n.params = params;
-      this.onChange();
-    }
-
-    fit() {
-      if (this.nodes.size === 0) { this.offset = { x: 0, y: 0 }; this.scale = 1; this._applyTransform(); return; }
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      for (const n of this.nodes.values()) {
-        minX = Math.min(minX, n.x); minY = Math.min(minY, n.y);
-        maxX = Math.max(maxX, n.x + 220); maxY = Math.max(maxY, n.y + 80);
-      }
-      const pad = 40;
-      const rect = this.viewport.getBoundingClientRect();
-      const w = maxX - minX + pad * 2, h = maxY - minY + pad * 2;
-      this.scale = Math.min(rect.width / w, rect.height / h, 1.2);
-      this.offset.x = (rect.width - w * this.scale) / 2 - minX * this.scale + pad * this.scale;
-      this.offset.y = (rect.height - h * this.scale) / 2 - minY * this.scale + pad * this.scale;
-      this._applyTransform();
+      const nd = this.nodes.get(id);
+      if (nd) { nd.params = params; this.onChange(); }
     }
 
     clear() {
       for (const id of [...this.nodes.keys()]) this.removeNode(id);
-      this.edges = []; this._renderEdges();
+      this.edges = [];
+      this._drawEdges();
+    }
+
+    fit() {
+      if (this.nodes.size === 0) { this._ox = 0; this._oy = 0; this._scale = 1; this._applyTransform(); return; }
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const n of this.nodes.values()) {
+        x0 = Math.min(x0, n.x);
+        y0 = Math.min(y0, n.y);
+        x1 = Math.max(x1, n.x + NODE_W);
+        y1 = Math.max(y1, n.y + 60);
+      }
+      const pad = 40;
+      const r = this._vp.getBoundingClientRect();
+      const w = x1 - x0 + pad * 2, h = y1 - y0 + pad * 2;
+      this._scale = Math.min(r.width / w, r.height / h, 1.2);
+      this._scale = Math.max(0.2, this._scale);
+      this._ox = Math.round((r.width  - w * this._scale) / 2 - x0 * this._scale + pad * this._scale);
+      this._oy = Math.round((r.height - h * this._scale) / 2 - y0 * this._scale + pad * this._scale);
+      this._applyTransform();
+    }
+
+    setScale(s) {
+      this._scale = Math.max(0.2, Math.min(2.5, s));
+      this._applyTransform();
     }
 
     exportGraph() {
@@ -317,28 +316,111 @@
       this.clear();
       if (!graph || !Array.isArray(graph.nodes)) return;
       for (const n of graph.nodes) {
-        this.addNode({
-          id: n.id, type: n.type, label: n.label, icon: n.icon,
-          params: n.params || {}, x: n.position?.x || 50, y: n.position?.y || 50,
-        });
+        this.addNode({ id: n.id, type: n.type, label: n.label, icon: n.icon,
+          params: n.params || {}, x: n.position?.x || 50, y: n.position?.y || 50 });
       }
       (graph.edges || []).forEach(e => this.addEdge(e.from, e.to));
       this.fit();
     }
 
-    highlightTrace(trace = []) {
-      for (const n of this.nodes.values()) n.el.classList.remove('trace-ok', 'trace-error', 'trace-skipped');
+    highlightTrace(trace) {
+      for (const n of this.nodes.values()) {
+        n.el.classList.remove('wf-trace-ok', 'wf-trace-error', 'wf-trace-skip');
+      }
       for (const t of trace) {
         const n = this.nodes.get(t.id);
         if (!n) continue;
-        if (t.status === 'ok') n.el.classList.add('trace-ok');
-        else if (t.status === 'error') n.el.classList.add('trace-error');
-        else n.el.classList.add('trace-skipped');
+        if (t.status === 'ok') n.el.classList.add('wf-trace-ok');
+        else if (t.status === 'error') n.el.classList.add('wf-trace-error');
+        else n.el.classList.add('wf-trace-skip');
       }
+    }
+
+    /* ── Internals ── */
+
+    _applyTransform() {
+      const tx = Math.round(this._ox) + 'px';
+      const ty = Math.round(this._oy) + 'px';
+      this._nodesLayer.style.transform  = `translate(${tx},${ty}) scale(${this._scale})`;
+      this._edgesLayer.style.transform  = `translate(${tx},${ty}) scale(${this._scale})`;
+      const lbl = this._toolbar.querySelector('.wf-tb-zoom');
+      if (lbl) lbl.textContent = Math.round(this._scale * 100) + '%';
+    }
+
+    _drawEdges() {
+      this._edgesGroup.innerHTML = '';
+      for (const e of this.edges) {
+        const a = this.nodes.get(e.from), b = this.nodes.get(e.to);
+        if (!a || !b) continue;
+        const x1 = Math.round(a.x + PORT_OFF_OUT), y1 = Math.round(a.y + PORT_Y_OFF);
+        const x2 = Math.round(b.x), y2 = Math.round(b.y + PORT_Y_OFF);
+        const path = document.createElementNS(SVG_NS, 'path');
+        path.setAttribute('d', this._curve(x1, y1, x2, y2));
+        path.setAttribute('stroke', '#3366cc');
+        path.setAttribute('stroke-width', '2');
+        path.setAttribute('fill', 'none');
+        path.setAttribute('marker-end', 'url(#wf-arr)');
+        path.classList.add('wf-edge');
+        path.dataset.from = e.from;
+        path.dataset.to = e.to;
+        path.addEventListener('dblclick', () => {
+          if (confirm('Удалить связь?')) { this.removeEdge(e.from, e.to); this.onChange(); }
+        });
+        this._edgesGroup.appendChild(path);
+      }
+    }
+
+    _curve(x1, y1, x2, y2) {
+      const dx = Math.max(40, Math.abs(x2 - x1) * 0.4);
+      return `M${x1} ${y1} C${x1+dx} ${y1}, ${x2-dx} ${y2}, ${x2} ${y2}`;
+    }
+
+    _makeTempPath() {
+      const p = document.createElementNS(SVG_NS, 'path');
+      p.setAttribute('stroke', '#59a8ff');
+      p.setAttribute('stroke-width', '2');
+      p.setAttribute('fill', 'none');
+      p.setAttribute('stroke-dasharray', '4 4');
+      this._edgesGroup.appendChild(p);
+      return p;
+    }
+
+    _select(id) {
+      this._deselect();
+      this._selId = id;
+      const nd = this.nodes.get(id);
+      if (nd) nd.el.classList.add('wf-selected');
+    }
+
+    _deselect() {
+      if (this._selId) {
+        const nd = this.nodes.get(this._selId);
+        if (nd) nd.el.classList.remove('wf-selected');
+      }
+      this._selId = null;
+    }
+
+    _nodeFromEl(nodeEl) {
+      if (!nodeEl) return null;
+      return this.nodes.get(nodeEl.dataset.id) || null;
+    }
+
+    _el(tag, cls) {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      return e;
     }
   }
 
-  function escapeHtml(s) { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; }
+  function btn(label, act) {
+    return `<button class="wf-tb-btn" data-act="${act}">${label}</button>`;
+  }
 
-  window.WorkflowCanvas = Canvas;
+  function esc(s) {
+    const d = document.createElement('span');
+    d.textContent = String(s ?? '');
+    return d.innerHTML;
+  }
+
+  window.WorkflowCanvas = WorkflowCanvas;
 })();

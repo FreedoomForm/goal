@@ -126,6 +126,113 @@ async function runNode(node, inbound, ctx) {
       return { output: { html } };
     }
 
+    case 'output.alert': {
+      const level = node.params.level || 'warning';
+      const message = interpolate(node.params.message || 'Alert from workflow', { input, ctx });
+      log.info('workflow.alert', { level, message, node_id: node.id });
+      return { output: { level, message, triggered: true } };
+    }
+
+    /* ── ML / Analytics nodes (proxy to ML Engine on port 18091) ── */
+
+    case 'ml.forecast': {
+      const http = require('http');
+      const model = node.params.model || 'ensemble';
+      const horizon = node.params.horizon || 30;
+      const metric = node.params.metric || 'gas_balance';
+      const mlResp = await new Promise((resolve, reject) => {
+        const payload = JSON.stringify({ model_type: model, horizon, metric, train_days: 365, retrain: false });
+        const req = http.request('http://127.0.0.1:18091/api/forecast', { method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } }, (res) => {
+          let data = '';
+          res.on('data', (chunk) => { data += chunk; });
+          res.on('end', () => {
+            try { resolve(JSON.parse(data)); } catch { reject(new Error('ML Engine response parse error')); }
+          });
+        });
+        req.on('error', () => reject(new Error('ML Engine not available (port 18091)')));
+        req.setTimeout(30000, () => { req.destroy(); reject(new Error('ML Engine timeout')); });
+        req.write(payload);
+        req.end();
+      });
+      return { output: { model, horizon, forecast: mlResp.forecast, metrics: mlResp.metrics } };
+    }
+
+    case 'ml.train': {
+      const http = require('http');
+      const modelType = node.params.model_type || 'ensemble';
+      const trainDays = node.params.train_days || 365;
+      const mlResp = await new Promise((resolve, reject) => {
+        const payload = JSON.stringify({ model_type: modelType, horizon: 30, train_days: trainDays, retrain: true });
+        const req = http.request('http://127.0.0.1:18091/api/forecast', { method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } }, (res) => {
+          let data = '';
+          res.on('data', (chunk) => { data += chunk; });
+          res.on('end', () => {
+            try { resolve(JSON.parse(data)); } catch { reject(new Error('ML Engine response parse error')); }
+          });
+        });
+        req.on('error', () => reject(new Error('ML Engine not available (port 18091)')));
+        req.setTimeout(60000, () => { req.destroy(); reject(new Error('ML Engine training timeout')); });
+        req.write(payload);
+        req.end();
+      });
+      return { output: { trained: true, model: modelType, metrics: mlResp.metrics } };
+    }
+
+    case 'analytics.risk': {
+      const http = require('http');
+      const horizon = node.params.forecast_horizon || 30;
+      const mlResp = await new Promise((resolve, reject) => {
+        const payload = JSON.stringify({ forecast_horizon: horizon, include_pressure: true, include_financial: true });
+        const req = http.request('http://127.0.0.1:18091/api/risk/assess', { method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } }, (res) => {
+          let data = '';
+          res.on('data', (chunk) => { data += chunk; });
+          res.on('end', () => {
+            try { resolve(JSON.parse(data)); } catch { reject(new Error('ML Engine response parse error')); }
+          });
+        });
+        req.on('error', () => reject(new Error('ML Engine not available (port 18091)')));
+        req.setTimeout(30000, () => { req.destroy(); reject(new Error('ML Engine timeout')); });
+        req.write(payload);
+        req.end();
+      });
+      return { output: { balance_risk: mlResp.balance_risk, financial_risk: mlResp.financial_risk, composite: mlResp.composite_index } };
+    }
+
+    case 'analytics.score': {
+      const http = require('http');
+      const mlResp = await new Promise((resolve, reject) => {
+        const req = http.request('http://127.0.0.1:18091/api/scoring/score', { method: 'POST',
+          headers: { 'Content-Type': 'application/json' } }, (res) => {
+          let data = '';
+          res.on('data', (chunk) => { data += chunk; });
+          res.on('end', () => {
+            try { resolve(JSON.parse(data)); } catch { reject(new Error('ML Engine response parse error')); }
+          });
+        });
+        req.on('error', () => reject(new Error('ML Engine not available (port 18091)')));
+        req.setTimeout(15000, () => { req.destroy(); reject(new Error('ML Engine timeout')); });
+        req.end();
+      });
+      return { output: { total: mlResp.total_consumers, summary: mlResp.summary, scores: (mlResp.scores || []).slice(0, 10) } };
+    }
+
+    case 'etl.pipeline': {
+      const { runETLPipeline } = require('../services/etl/engine');
+      const pipelineId = node.params.pipeline_id;
+      if (!pipelineId) throw new Error('etl.pipeline requires pipeline_id parameter');
+      const result = await runETLPipeline(pipelineId);
+      return { output: { pipeline_id: pipelineId, status: result.status, metrics: result.phases, rows_loaded: result.rows_loaded } };
+    }
+
+    case 'etl.aggregate': {
+      const groupBy = node.params.group_by || 'region';
+      const metricsSpec = node.params.metrics || 'sum';
+      return { output: { aggregated: true, group_by: groupBy, message: 'Aggregation is a placeholder — implement in ETL pipeline' } };
+    }
+
     default:
       throw new Error(`Unknown node type: ${node.type}`);
   }
