@@ -852,41 +852,74 @@ async function renderAIEngine(container) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ prompt: msg, model: selectedModel, provider: selectedProvider }),
         });
-        const reader = res.body;
-        let fullContent = '';
-        reader.on('data', (chunk) => {
-          try {
-            const lines = chunk.toString().split('\n').filter(l => l.trim());
-            for (const line of lines) {
-              if (line.startsWith('event: ') || line.startsWith('data: ')) {
-                const dataLine = line.startsWith('data: ') ? line.slice(6) : null;
-                if (!dataLine) continue;
-                const data = JSON.parse(dataLine);
-                if (data.content && !data.done) {
-                  fullContent += data.content;
-                  state.chatHistory[aiMsgIndex].content = fullContent;
-                  // Update last chat bubble
-                  const bubbles = chatEl.querySelectorAll('.ai-content pre');
-                  const lastBubble = bubbles[bubbles.length - 1];
-                  if (lastBubble) lastBubble.textContent = fullContent;
-                  chatEl.scrollTop = chatEl.scrollHeight;
-                }
-                if (data.done) {
-                  fullContent = data.content || fullContent;
-                  state.chatHistory[aiMsgIndex].content = fullContent;
-                  state.chatHistory[aiMsgIndex].isStreaming = false;
-                  state.chatHistory[aiMsgIndex].provider = data.provider || selectedProvider;
-                  state.chatHistory[aiMsgIndex].model = data.model || selectedModel;
-                  // Persist AI response
-                  saveChatMessage('ai', fullContent, data.model || selectedModel, data.provider || selectedProvider);
-                }
-              }
-            }
-          } catch {}
-        });
-        reader.on('end', () => {
+
+        if (!res.ok || !res.body) {
+          // Fall back to non-streaming
+          const result = await api('/api/chat', {
+            method: 'POST',
+            body: JSON.stringify({ prompt: msg, model: selectedModel, provider: selectedProvider, thread_id: state.chatThreadId }),
+          });
+          state.chatHistory[aiMsgIndex].content = result.content;
+          state.chatHistory[aiMsgIndex].provider = result.provider;
+          state.chatHistory[aiMsgIndex].model = result.model;
           state.chatHistory[aiMsgIndex].isStreaming = false;
-        });
+          if (result.thread_id) state.chatThreadId = result.thread_id;
+          const bubbles = chatEl.querySelectorAll('.ai-content pre');
+          const lastBubble = bubbles[bubbles.length - 1];
+          if (lastBubble) lastBubble.textContent = result.content;
+          chatEl.scrollTop = chatEl.scrollHeight;
+          return;
+        }
+
+        // Use browser-compatible ReadableStream API
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let fullContent = '';
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop();
+
+          for (const line of lines) {
+            if (line.startsWith('event: ')) continue;
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.content && !data.done) {
+                fullContent += data.content;
+                state.chatHistory[aiMsgIndex].content = fullContent;
+                const bubbles = chatEl.querySelectorAll('.ai-content pre');
+                const lastBubble = bubbles[bubbles.length - 1];
+                if (lastBubble) lastBubble.textContent = fullContent;
+                chatEl.scrollTop = chatEl.scrollHeight;
+              }
+              if (data.done !== undefined && data.done) {
+                fullContent = data.content || fullContent;
+                state.chatHistory[aiMsgIndex].content = fullContent;
+                state.chatHistory[aiMsgIndex].isStreaming = false;
+                state.chatHistory[aiMsgIndex].provider = data.provider || selectedProvider;
+                state.chatHistory[aiMsgIndex].model = data.model || selectedModel;
+                saveChatMessage('ai', fullContent, data.model || selectedModel, data.provider || selectedProvider);
+              }
+            } catch {}
+          }
+        }
+
+        // If stream ended without explicit done event, finalize
+        if (fullContent && state.chatHistory[aiMsgIndex].isStreaming) {
+          state.chatHistory[aiMsgIndex].isStreaming = false;
+          saveChatMessage('ai', fullContent, selectedModel, selectedProvider);
+        }
+
+        // Re-render to clean up streaming state
+        const bubbles = chatEl.querySelectorAll('.ai-content pre');
+        const lastBubble = bubbles[bubbles.length - 1];
+        if (lastBubble) lastBubble.textContent = state.chatHistory[aiMsgIndex].content;
       } catch (err) {
         state.chatHistory[aiMsgIndex].content = 'Ошибка: ' + err.message;
         state.chatHistory[aiMsgIndex].isStreaming = false;

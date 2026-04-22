@@ -402,6 +402,132 @@ async function renderDashboard(container) {
   });
 }
 
+/* ══════════════ AUTH FIELDS FOR CONNECTOR MODALS ══════════════ */
+function getAuthFieldsHtml(connType, prefix = 'new') {
+  const id = (name) => `${prefix}Auth_${name}`;
+  switch (connType) {
+    case 'telegram':
+      return `
+        <div class="form-group">
+          <label class="form-label">Bot Token</label>
+          <input class="form-input" id="${id('token')}" type="password" placeholder="123456:ABC-DEF... от @BotFather">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Chat ID</label>
+          <input class="form-input" id="${id('chat_id')}" placeholder="Канал или группа ID (например: -1001234567890)">
+        </div>`;
+    case 'email': case 'smtp':
+      return `
+        <div class="form-group">
+          <label class="form-label">SMTP Host</label>
+          <input class="form-input" id="${id('host')}" placeholder="smtp.gmail.com">
+        </div>
+        <div class="form-group">
+          <label class="form-label">SMTP Port</label>
+          <input class="form-input" id="${id('port')}" placeholder="587" type="number">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Username</label>
+          <input class="form-input" id="${id('username')}" placeholder="user@gmail.com">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Password</label>
+          <input class="form-input" id="${id('password')}" type="password" placeholder="Пароль или App Password">
+        </div>
+        <div class="form-group">
+          <label class="form-label">From (Email)</label>
+          <input class="form-input" id="${id('from')}" placeholder="noreply@example.com">
+        </div>`;
+    case 'database': case 'postgresql': case 'mysql': case 'mssql':
+      return `
+        <div class="form-group">
+          <label class="form-label">Host</label>
+          <input class="form-input" id="${id('host')}" placeholder="localhost">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Port</label>
+          <input class="form-input" id="${id('port')}" placeholder="5432" type="number">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Database</label>
+          <input class="form-input" id="${id('database')}" placeholder="my_database">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Username</label>
+          <input class="form-input" id="${id('username')}" placeholder="postgres">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Password</label>
+          <input class="form-input" id="${id('password')}" type="password" placeholder="Пароль">
+        </div>`;
+    case 'mqtt': case 'iot':
+      return `
+        <div class="form-group">
+          <label class="form-label">MQTT Username (опционально)</label>
+          <input class="form-input" id="${id('username')}" placeholder="username">
+        </div>
+        <div class="form-group">
+          <label class="form-label">MQTT Password (опционально)</label>
+          <input class="form-input" id="${id('password')}" type="password" placeholder="password">
+        </div>`;
+    case 'webhook':
+      return `
+        <div class="form-group">
+          <label class="form-label">Webhook Secret (для HMAC подписи)</label>
+          <input class="form-input" id="${id('secret')}" type="password" placeholder="my-secret-key">
+        </div>`;
+    case 'askug': case 'egaz': case 'ugaz': case 'tekinsoft':
+      return `
+        <div class="form-group">
+          <label class="form-label">API Token</label>
+          <input class="form-input" id="${id('token')}" type="password" placeholder="Ваш API токен">
+        </div>
+        <div class="form-group">
+          <label class="form-label">API Key (опционально)</label>
+          <input class="form-input" id="${id('api_key')}" type="password" placeholder="API Key">
+        </div>`;
+    case 'ollama_cloud':
+      return `
+        <div class="form-group">
+          <label class="form-label">API Token / Bearer Token</label>
+          <input class="form-input" id="${id('token')}" type="password" placeholder="Токен авторизации облачного сервера">
+        </div>`;
+    default:
+      // Generic REST / OData / CRM / ERP
+      return `
+        <div class="form-group">
+          <label class="form-label">API Token / Bearer Token</label>
+          <input class="form-input" id="${id('token')}" type="password" placeholder="Bearer token или API ключ">
+        </div>
+        <div class="form-group">
+          <label class="form-label">API Key (опционально)</label>
+          <input class="form-input" id="${id('api_key')}" placeholder="X-API-Key">
+        </div>`;
+  }
+}
+
+function collectAuthPayload(connType, prefix = 'new') {
+  const val = (name) => document.getElementById(`${prefix}Auth_${name}`)?.value || '';
+  switch (connType) {
+    case 'telegram':
+      return { token: val('token'), chat_id: val('chat_id') };
+    case 'email': case 'smtp':
+      return { host: val('host'), port: val('port'), username: val('username'), password: val('password'), from: val('from') };
+    case 'database': case 'postgresql': case 'mysql': case 'mssql':
+      return { host: val('host'), port: val('port'), database: val('database'), username: val('username'), password: val('password') };
+    case 'mqtt': case 'iot':
+      return { username: val('username'), password: val('password') };
+    case 'webhook':
+      return { secret: val('secret') };
+    case 'ollama_cloud':
+      return { token: val('token') };
+    case 'askug': case 'egaz': case 'ugaz': case 'tekinsoft':
+      return { token: val('token'), api_key: val('api_key') };
+    default:
+      return { token: val('token'), api_key: val('api_key') };
+  }
+}
+
 /* ══════════════ CONNECTORS PAGE ══════════════ */
 async function renderConnectors(container) {
   const connectors = await api('/api/connectors');
@@ -436,7 +562,7 @@ async function renderConnectors(container) {
             </div>
             <div class="item-actions">
               <button class="btn btn-sm test-connector" data-id="${c.id}">🔍 Тест</button>
-              <button class="btn btn-sm edit-connector" data-id="${c.id}" data-name="${escapeHtml(c.name)}" data-type="${c.type}" data-url="${escapeHtml(c.base_url || '')}" data-auth="${c.auth_mode}" data-enabled="${c.enabled ? 1 : 0}">✎ Изменить</button>
+              <button class="btn btn-sm edit-connector" data-id="${c.id}" data-name="${escapeHtml(c.name)}" data-type="${c.type}" data-url="${escapeHtml(c.base_url || '')}" data-auth="${c.auth_mode}" data-enabled="${c.enabled ? 1 : 0}" data-auth-payload="${escapeHtml(JSON.stringify(c.auth_payload || {}))}">✎ Изменить</button>
               <button class="btn btn-sm btn-danger del-connector" data-id="${c.id}">✕</button>
             </div>
           </div>
@@ -484,19 +610,32 @@ async function renderConnectors(container) {
           <option value="token">API Token</option>
         </select>
       </div>
+      <div id="newConnAuthFields"></div>
     `, `
       <button class="btn" onclick="hideModal()">Отмена</button>
       <button class="btn btn-primary" id="btnSaveConn">Сохранить</button>
     `);
+
+    // Render type-specific auth fields on load and on type change
+    const updateAuthFields = () => {
+      const connType = $('newConnType')?.value;
+      $('newConnAuthFields').innerHTML = getAuthFieldsHtml(connType, 'new');
+    };
+    updateAuthFields();
+    $('newConnType')?.addEventListener('change', updateAuthFields);
+
     $('btnSaveConn')?.addEventListener('click', async () => {
       try {
+        const connType = $('newConnType').value;
+        const authPayload = collectAuthPayload(connType, 'new');
         await api('/api/connectors', {
           method: 'POST',
           body: JSON.stringify({
             name: $('newConnName').value,
-            type: $('newConnType').value,
+            type: connType,
             base_url: $('newConnUrl').value,
             auth_mode: $('newConnAuth').value,
+            auth_payload: authPayload,
           }),
         });
         hideModal();
@@ -534,6 +673,9 @@ async function renderConnectors(container) {
       const url = btn.dataset.url;
       const auth = btn.dataset.auth;
       const enabled = btn.dataset.enabled === '1';
+      let existingAuth = {};
+      try { existingAuth = JSON.parse(btn.dataset.authPayload || '{}'); } catch {}
+
       showModal('Изменить коннектор', `
         <div class="form-group">
           <label class="form-label">Имя</label>
@@ -572,6 +714,7 @@ async function renderConnectors(container) {
             <option value="token" ${auth==='token'?'selected':''}>API Token</option>
           </select>
         </div>
+        <div id="editConnAuthFields"></div>
         <div class="form-group">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
             <input type="checkbox" id="editConnEnabled" ${enabled?'checked':''} style="accent-color:#59a8ff">
@@ -582,15 +725,34 @@ async function renderConnectors(container) {
         <button class="btn" onclick="hideModal()">Отмена</button>
         <button class="btn btn-primary" id="btnUpdateConn">Сохранить</button>
       `);
+
+      // Render type-specific auth fields and populate with existing values
+      const updateEditAuthFields = () => {
+        const connType = $('editConnType')?.value;
+        $('editConnAuthFields').innerHTML = getAuthFieldsHtml(connType, 'edit');
+        // Populate existing values
+        for (const [key, value] of Object.entries(existingAuth)) {
+          const el = document.getElementById(`editAuth_${key}`);
+          if (el && value) el.value = value;
+        }
+      };
+      updateEditAuthFields();
+      $('editConnType')?.addEventListener('change', updateEditAuthFields);
+
       $('btnUpdateConn')?.addEventListener('click', async () => {
         try {
+          const connType = $('editConnType').value;
+          const authPayload = collectAuthPayload(connType, 'edit');
+          // Merge with existing values for fields not in the form
+          const mergedPayload = { ...existingAuth, ...authPayload };
           await api(`/api/connectors/${id}`, {
             method: 'PUT',
             body: JSON.stringify({
               name: $('editConnName').value,
-              type: $('editConnType').value,
+              type: connType,
               base_url: $('editConnUrl').value,
               auth_mode: $('editConnAuth').value,
+              auth_payload: mergedPayload,
               enabled: $('editConnEnabled').checked,
             }),
           });
