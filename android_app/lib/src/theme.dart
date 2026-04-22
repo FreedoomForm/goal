@@ -110,8 +110,8 @@ ThemeData buildTheme() {
       titleMedium: const TextStyle(fontFamily: 'Inter', fontWeight: FontWeight.w800, fontSize: 16, color: ink),
       labelLarge:  const TextStyle(fontFamily: 'Inter', fontWeight: FontWeight.w800, fontSize: 13, letterSpacing: 0.4, color: ink),
     ),
-    // Use `CardThemeData` — `CardTheme` is deprecated in Flutter 3.22+.
-    cardTheme: CardThemeData(
+    // CardTheme works across all Flutter versions.
+    cardTheme: CardTheme(
       color: card,
       surfaceTintColor: Colors.transparent,
       elevation: 0,
@@ -258,8 +258,8 @@ ThemeData buildTheme() {
       behavior: SnackBarBehavior.floating,
       elevation: 0,
     ),
-    // Use `DialogThemeData` — `DialogTheme` is deprecated in Flutter 3.22+.
-    dialogTheme: DialogThemeData(
+    // DialogTheme works across all Flutter versions.
+    dialogTheme: DialogTheme(
       backgroundColor: AegisColors.bgSurface,
       surfaceTintColor: Colors.transparent,
       shape: const RoundedRectangleBorder(
