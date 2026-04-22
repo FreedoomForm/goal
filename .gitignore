@@ -1,13 +1,79 @@
+# ───── Node / Electron ─────
 node_modules/
 dist/
+build/
+*.tsbuildinfo
+.npm/
+.pnp/
+.pnp.js
+
+# ───── App data / runtime ─────
 data/
 *.db
+*.db-journal
+*.sqlite
+*.sqlite3
 .eb-cache/
+
+# ───── Python ─────
 __pycache__/
+*.py[cod]
+*.egg-info/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# ───── Generated / derived artefacts ─────
 generated_reports/*.html
+parsed_xlsx.csv
+parsed.csv
+parsed_utf8.csv
+xlsx_out.txt
+*.bundle
+
+# ───── Flutter / Android ─────
 android_app/build/
 android_app/.dart_tool/
 android_app/.flutter-plugins*
+android_app/android/.gradle/
+android_app/.packages
+*.apk
+*.aab
+
+# ───── Logs ─────
 *.log
+logs/
+
+# ───── Coverage / test output ─────
+coverage/
+coverage.xml
+.nyc_output/
+
+# ───── OS / IDE ─────
 .DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ───── Secrets / env ─────
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.token
+*_rsa
+*_ed25519
+
+# ───── Electron build artefacts ─────
+aegisops_app/dist/
+aegisops_app/node_modules/
+aegisops_app/data/

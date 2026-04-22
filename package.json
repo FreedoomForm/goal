@@ -1,5 +1,29 @@
 {
+  "name": "aegisops-goal-workspace",
+  "version": "2.0.0",
+  "description": "AegisOps Local AI — workspace root. The actual app lives in aegisops_app/.",
+  "private": true,
+  "workspaces": [
+    "aegisops_app"
+  ],
+  "scripts": {
+    "start": "npm --prefix aegisops_app start",
+    "server": "npm --prefix aegisops_app run server",
+    "test": "npm --prefix aegisops_app test",
+    "lint": "npm --prefix aegisops_app run lint",
+    "build:win": "npm --prefix aegisops_app run build:win",
+    "build:linux": "npm --prefix aegisops_app run build:linux",
+    "build:mac": "npm --prefix aegisops_app run build:mac"
+  },
   "dependencies": {
     "xlsx": "^0.18.5"
-  }
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/FreedoomForm/goal.git"
+  },
+  "license": "MIT"
 }

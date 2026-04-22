@@ -1,0 +1,80 @@
+version: "3.9"
+
+# ──────────────────────────────────────────────────────────────
+# AegisOps Local AI — repeatable local stack
+#   server   : headless Node server (:18090)
+#   postgres : TimescaleDB image (Postgres 15 + Timescale extension)
+#   redpanda : Kafka-compatible broker
+#   ollama   : local LLM runtime
+# ──────────────────────────────────────────────────────────────
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg15
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${PG_DATABASE:-aegisops}
+      POSTGRES_USER: ${PG_USER:-aegisops}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-change_me}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-aegisops} -d ${PG_DATABASE:-aegisops}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redpanda:
+    image: redpandadata/redpanda:latest
+    restart: unless-stopped
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp=1
+      - --memory=1G
+      - --reserve-memory=0M
+      - --check=false
+      - --node-id=0
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092
+    ports:
+      - "9092:9092"
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama:/root/.ollama
+    ports:
+      - "11434:11434"
+
+  server:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_started
+    environment:
+      NODE_ENV: production
+      BIND: 0.0.0.0
+      PORT: 18090
+      AEGISOPS_SECRET: ${AEGISOPS_SECRET:-dev_secret_change_me}
+      PG_HOST: postgres
+      PG_PORT: 5432
+      PG_DATABASE: ${PG_DATABASE:-aegisops}
+      PG_USER: ${PG_USER:-aegisops}
+      PG_PASSWORD: ${PG_PASSWORD:-change_me}
+      KAFKA_BROKERS: redpanda:9092
+      OLLAMA_BASE_URL: http://ollama:11434
+      AEGISOPS_CORS_ORIGINS: ${AEGISOPS_CORS_ORIGINS:-}
+    ports:
+      - "18090:18090"
+      - "18091:18091"
+
+volumes:
+  pgdata:
+  ollama:

@@ -202,8 +202,20 @@ async function createApp() {
   app.disable('x-powered-by');
   app.set('trust proxy', true);
 
+  // CORS: env-driven allow-list. AEGISOPS_CORS_ORIGINS="https://a.com,https://b.com"
+  // Wildcard reflection is only allowed when AEGISOPS_CORS_WILDCARD=1 (dev only).
+  const corsAllowList = (process.env.AEGISOPS_CORS_ORIGINS || '')
+    .split(',').map(s => s.trim()).filter(Boolean);
+  const corsWildcard = process.env.AEGISOPS_CORS_WILDCARD === '1'
+    || process.env.NODE_ENV !== 'production';
   app.use(cors({
-    origin: (origin, cb) => cb(null, true),
+    origin: (origin, cb) => {
+      // Same-origin / server-to-server (no Origin header) is always allowed
+      if (!origin) return cb(null, true);
+      if (corsAllowList.includes(origin)) return cb(null, true);
+      if (corsWildcard) return cb(null, true);
+      return cb(new Error(`CORS: origin ${origin} not allowed`), false);
+    },
     credentials: false,
     maxAge: 86400,
   }));
@@ -214,6 +226,23 @@ async function createApp() {
   app.use(inputSanitizer);
   app.use(requestLogger);
   app.use('/api/', rateLimiter({ max: 300, windowMs: 60_000 }));
+
+  // ─── Health & readiness probes (for k8s/docker orchestration) ───
+  app.get('/healthz', (req, res) => {
+    res.json({ status: 'ok', uptime: process.uptime(), ts: new Date().toISOString() });
+  });
+  app.get('/readyz', async (req, res) => {
+    const checks = { db: 'unknown', kafka: 'unknown' };
+    try {
+      const info = await getDBInfo();
+      checks.db = info?.connected ? 'ok' : 'degraded';
+    } catch (e) { checks.db = `error: ${e.message}`; }
+    try {
+      checks.kafka = eventBus?.isConnected?.() ? 'ok' : 'fallback';
+    } catch { checks.kafka = 'fallback'; }
+    const healthy = checks.db === 'ok' || checks.db === 'degraded';
+    res.status(healthy ? 200 : 503).json({ status: healthy ? 'ready' : 'not-ready', checks });
+  });
 
   // Auth routes
   app.use('/api/auth', authRoutes);
@@ -1268,6 +1297,14 @@ async function startServer(port = 18090, { bind = '0.0.0.0', dataDir } = {}) {
     _dataDir = dataDir;
     REPORTS_DIR = path.join(_dataDir, 'generated_reports');
     REPORTS_DIR = ensureDir(REPORTS_DIR);
+  }
+
+  // Production fail-fast: do NOT allow the in-memory sql.js fallback in prod.
+  if (process.env.NODE_ENV === 'production' && !process.env.PG_HOST && !process.env.POSTGRES_HOST) {
+    throw new Error(
+      '[AegisOps] Refusing to start in production with no PostgreSQL configured. ' +
+      'Set PG_HOST / POSTGRES_HOST (or run with NODE_ENV=development).'
+    );
   }
 
   // 1. Initialize database (PostgreSQL with TimescaleDB, or SQLite fallback)

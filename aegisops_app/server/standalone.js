@@ -20,6 +20,15 @@ const { stopScheduler } = require('./workflow/scheduler');
 const { stopRetentionJob } = require('./services/retention');
 const { shutdownDB } = require('./db/pg');
 const { log } = require('./middleware/logger');
+const { stopCleanup } = require('./middleware/security');
+
+// Timeout helper — prevent a single hanging teardown from blocking shutdown
+function withTimeout(label, promise, ms = 5000) {
+  return Promise.race([
+    Promise.resolve(promise).then(v => ({ label, ok: true, v })),
+    new Promise((resolve) => setTimeout(() => resolve({ label, ok: false, timeout: true }), ms)),
+  ]);
+}
 
 const PORT = parseInt(process.env.PORT || '18090');
 const BIND = process.env.BIND || '127.0.0.1';
@@ -62,25 +71,32 @@ startServer(PORT, { bind: BIND }).then(async () => {
 });
 
 // Graceful shutdown
+let _shuttingDown = false;
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, async () => {
+    if (_shuttingDown) return;
+    _shuttingDown = true;
     console.log(`\n[AegisOps] Received ${sig}, shutting down...`);
 
-    // Stop gateway
+    // Synchronous teardown first
     try { tunnel.stopGateway(); } catch {}
+    try { stopScheduler(); } catch {}
+    try { stopRetentionJob(); } catch {}
+    try { stopCleanup(); } catch {}
 
-    // Stop cron schedulers
-    stopScheduler();
-    stopRetentionJob();
-
-    // Disconnect Kafka
-    try { await eventBus.shutdown(); } catch {}
-
-    // Disconnect tunnel
-    try { await tunnel.stop(); } catch {}
-
-    // Close database connections
-    try { await shutdownDB(); } catch {}
+    // Async teardown runs in parallel with bounded timeouts
+    const results = await Promise.allSettled([
+      withTimeout('kafka',  eventBus.shutdown?.()),
+      withTimeout('tunnel', tunnel.stop?.()),
+      withTimeout('db',     shutdownDB?.()),
+    ]);
+    for (const r of results) {
+      if (r.status === 'fulfilled' && r.value?.timeout) {
+        console.warn(`[AegisOps] ⏱️  ${r.value.label} shutdown timed out`);
+      } else if (r.status === 'rejected') {
+        console.warn(`[AegisOps] shutdown step failed: ${r.reason?.message || r.reason}`);
+      }
+    }
 
     log.info('server.shutdown_complete');
     process.exit(0);
