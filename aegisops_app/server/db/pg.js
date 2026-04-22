@@ -355,6 +355,18 @@ async function runMigrations() {
       log.warn('pg.timescaledb_unavailable', { error: tsErr.message });
     }
     try { await client.query(MIGRATIONS_ETL); } catch {}
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const dwhPath = path.join(__dirname, 'dwh_schema.sql');
+      if (fs.existsSync(dwhPath)) {
+        const dwhSql = fs.readFileSync(dwhPath, 'utf8');
+        await client.query(dwhSql);
+        log.info('pg.dwh_schema_applied');
+      }
+    } catch (dwhErr) {
+      log.warn('pg.dwh_schema_partial', { error: dwhErr.message });
+    }
     await client.query('COMMIT');
     log.info('pg.migrations_complete');
   } catch (err) {

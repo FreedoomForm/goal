@@ -206,6 +206,7 @@ async function renderPage(page) {
       case 'audit': await renderAudit(container); break;
       case 'settings': await renderSettings(container); break;
       case 'planning': await window.renderPlanningPage(container); break;
+      case 'bi-dashboard': await window.renderBIDashboard(container); break;
       case 'mcp': await window.renderMcpPage(container); break;
       case 'mobile': await window.renderMobilePage(container); break;
       default: container.innerHTML = '<h2>404</h2>';
