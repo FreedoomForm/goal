@@ -476,6 +476,47 @@ async function createApp() {
   app.use(express.static(path.join(__dirname, '..', 'public')));
   app.use('/reports', express.static(REPORTS_DIR));
 
+  // Documents directory for AI-generated content
+  const docRenderer = require('./services/document-renderer');
+  app.use('/documents', express.static(docRenderer.DOCS_DIR));
+
+  /* ── Generate Document from AI (HTML/PDF) ── */
+  app.post('/api/documents/generate', async (req, res) => {
+    try {
+      const { title, content, format = 'html', template = 'default', data = {} } = req.body;
+      if (!content) return res.status(400).json({ error: 'content required' });
+
+      const doc = await docRenderer.renderDocument({
+        title: title || 'Документ',
+        content,
+        format,
+        template,
+        data,
+      });
+
+      logEvent('document.generated', { id: doc.id, format: doc.format, title });
+      res.json(doc);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /* ── Create Document from AI Response ── */
+  app.post('/api/documents/from-ai', async (req, res) => {
+    try {
+      const { response, title, format = 'html' } = req.body;
+      if (!response) return res.status(400).json({ error: 'response required' });
+
+      const doc = await docRenderer.createFromAIResponse(response, { title, format });
+      const card = docRenderer.createChatCard(doc);
+
+      logEvent('document.from_ai', { id: doc.id, format: doc.format });
+      res.json({ document: doc, card });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   /* ── Health (enhanced with v2.0 infrastructure info) ── */
   app.get('/api/health', async (req, res) => {
     const c = await queryOne('SELECT COUNT(*) as c FROM connectors');
