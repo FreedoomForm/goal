@@ -828,6 +828,79 @@ async function createApp() {
     res.json(result);
   });
 
+  /* ── ML Engine ── */
+  const mlBridge = require('./services/ml-bridge');
+
+  // ML Status
+  app.get('/api/ml/status', async (req, res) => {
+    try {
+      const status = await mlBridge.getMLStatus();
+      res.json(status);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Start ML server
+  app.post('/api/ml/start', async (req, res) => {
+    try {
+      const result = await mlBridge.startMLServer();
+      logEvent('ml.started', { port: mlBridge.ML_PORT });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Stop ML server
+  app.post('/api/ml/stop', async (req, res) => {
+    try {
+      const result = await mlBridge.stopMLServer();
+      logEvent('ml.stopped', {});
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Install ML dependencies
+  app.post('/api/ml/install', async (req, res) => {
+    try {
+      const result = await mlBridge.installMLDependencies();
+      logEvent('ml.installed', { success: result.success });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Auto setup ML
+  app.post('/api/ml/setup', async (req, res) => {
+    try {
+      const result = await mlBridge.autoSetupML();
+      logEvent('ml.setup', { success: result.success });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ML Forecast
+  app.post('/api/ml/forecast', async (req, res) => {
+    try {
+      const { data, horizon = 30, model = 'ensemble' } = req.body;
+      if (!data || !Array.isArray(data)) {
+        return res.status(400).json({ error: 'data array required' });
+      }
+
+      const result = await mlBridge.mlForecast(data, horizon, model);
+      logEvent('ml.forecast', { horizon, model, points: data.length });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   /* ── AI Assistant with Streaming (SSE) ── */
   app.post('/api/assistant/stream', async (req, res) => {
     const { prompt, model, provider } = req.body;
@@ -1420,6 +1493,23 @@ async function startServer(port = 18090, { bind = '0.0.0.0', dataDir } = {}) {
 
   // 9. Start data retention cleanup job
   startRetentionJob();
+
+  // 10. Auto-start ML Engine (optional, non-blocking)
+  if (process.env.ML_AUTO_START !== 'false') {
+    setTimeout(async () => {
+      try {
+        const mlBridge = require('./services/ml-bridge');
+        const result = await mlBridge.autoSetupML();
+        if (result.success) {
+          log.info('ml.engine_started', { port: mlBridge.ML_PORT });
+        } else {
+          log.warn('ml.engine_start_failed', { error: result.error });
+        }
+      } catch (err) {
+        log.warn('ml.bridge_error', { error: err.message });
+      }
+    }, 5000); // Delay 5s to let server start first
+  }
 
   return new Promise((resolve, reject) => {
     const server = http.createServer(app);
