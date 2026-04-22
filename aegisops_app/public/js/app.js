@@ -2007,9 +2007,17 @@ window.addEventListener('DOMContentLoaded', () => {
   const sidebarChatSend = $('sidebarChatSend');
 
   if (sidebarChatBtn && sidebarChatPanel) {
-    sidebarChatBtn.addEventListener('click', () => {
+    sidebarChatBtn.addEventListener('click', async () => {
       sidebarChatPanel.classList.toggle('open');
       if (sidebarChatPanel.classList.contains('open') && sidebarChatInput) {
+        // Load chat history when opening
+        try {
+          await ensureChatThread();
+          if (sidebarChatMessages && state.chatHistory.length > 0) {
+            sidebarChatMessages.innerHTML = state.chatHistory.map(msg => renderChatMessage(msg)).join('');
+            sidebarChatMessages.scrollTop = sidebarChatMessages.scrollHeight;
+          }
+        } catch {}
         setTimeout(() => sidebarChatInput.focus(), 300);
       }
     });
@@ -2019,7 +2027,7 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 
   // Sidebar chat send function
-  function sidebarChatSendMsg() {
+  async function sidebarChatSendMsg() {
     const input = sidebarChatInput;
     const msg = input?.value?.trim();
     if (!msg) return;
@@ -2037,26 +2045,25 @@ window.addEventListener('DOMContentLoaded', () => {
     </div>`;
     sidebarChatMessages.scrollTop = sidebarChatMessages.scrollHeight;
 
-    fetch('/api/assistant', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: msg }),
-    })
-    .then(r => r.ok ? r.json() : r.text().then(t => { throw new Error(t); }))
-    .then(result => {
+    try {
+      const tid = state.chatThreadId || `thread_${Date.now()}`;
+      const result = await api('/api/chat', {
+        method: 'POST',
+        body: JSON.stringify({ prompt: msg, thread_id: tid }),
+      });
       const el = document.getElementById(thinkingId);
       if (el) el.remove();
 
+      if (result.thread_id) state.chatThreadId = result.thread_id;
       state.chatHistory.push({ role: 'ai', content: result.content, provider: result.provider, model: result.model });
       sidebarChatMessages.innerHTML += renderChatMessage({ role: 'ai', content: result.content, provider: result.provider, model: result.model });
       sidebarChatMessages.scrollTop = sidebarChatMessages.scrollHeight;
-    })
-    .catch(err => {
+    } catch (err) {
       const el = document.getElementById(thinkingId);
       if (el) el.remove();
       sidebarChatMessages.innerHTML += renderChatMessage({ role: 'ai', content: 'Ошибка: ' + err.message, provider: 'error' });
       sidebarChatMessages.scrollTop = sidebarChatMessages.scrollHeight;
-    });
+    }
   }
 
   sidebarChatSend?.addEventListener('click', sidebarChatSendMsg);

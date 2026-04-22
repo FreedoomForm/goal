@@ -1303,7 +1303,44 @@ async function startServer(port = 18090, { bind = '0.0.0.0', dataDir } = {}) {
   // 7. Start workflow cron scheduler
   startScheduler();
 
-  // 8. Start data retention cleanup job
+  // 8. Auto-seed built-in connectors if they don't exist yet
+  try {
+    // PostgreSQL / Database connector (always available for scheduling & ETL)
+    const pgConnectorExists = await queryOne("SELECT id FROM connectors WHERE type='postgresql' LIMIT 1");
+    if (!pgConnectorExists) {
+      const pgHost = process.env.POSTGRES_HOST || process.env.PGHOST || 'localhost';
+      const pgPort = process.env.POSTGRES_PORT || process.env.PGPORT || '5432';
+      const pgDb = process.env.POSTGRES_DB || process.env.PGDATABASE || 'aegisops';
+      const pgUser = process.env.POSTGRES_USER || process.env.PGUSER || 'postgres';
+      const pgPass = process.env.POSTGRES_PASSWORD || process.env.PGPASSWORD || '';
+      const now = nowISO();
+      const pgConfig = { db_type: 'postgresql', host: pgHost, port: parseInt(pgPort), database: pgDb };
+      const pgAuth = { username: pgUser, password: pgPass };
+      const encryptedPayload = encryptCredentials(pgAuth);
+      await runSQL(
+        `INSERT INTO connectors (name, type, base_url, auth_mode, auth_payload, encrypted_auth_payload, config, enabled, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ['PostgreSQL (DWH)', 'postgresql', `postgresql://${pgUser}@${pgHost}:${pgPort}/${pgDb}`, 'password', '{}', encryptedPayload, JSON.stringify(pgConfig), 1, now, now]
+      );
+      log.info('server.connector_seeded', { type: 'postgresql', host: pgHost, port: pgPort, database: pgDb });
+    }
+
+    // Telegram connector placeholder (disabled — user configures bot token)
+    const tgConnectorExists = await queryOne("SELECT id FROM connectors WHERE type='telegram' LIMIT 1");
+    if (!tgConnectorExists) {
+      const now = nowISO();
+      await runSQL(
+        `INSERT INTO connectors (name, type, base_url, auth_mode, auth_payload, encrypted_auth_payload, config, enabled, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ['Telegram Bot', 'telegram', 'https://api.telegram.org', 'token', '{}', '', JSON.stringify({ chat_id: '' }), 0, now, now]
+      );
+      log.info('server.connector_seeded', { type: 'telegram', note: 'disabled — configure bot token to enable' });
+    }
+  } catch (seedErr) {
+    log.warn('server.connector_seed_error', { error: seedErr.message });
+  }
+
+  // 9. Start data retention cleanup job
   startRetentionJob();
 
   return new Promise((resolve, reject) => {
