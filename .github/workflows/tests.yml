@@ -21,10 +21,9 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: package-lock.json
-      - name: Install (root workspace)
-        run: npm ci || npm install
-        working-directory: .
+          cache-dependency-path: aegisops_app/package-lock.json
+      - name: Install
+        run: npm ci
       - name: Lint
         run: npm run lint --if-present
         continue-on-error: true

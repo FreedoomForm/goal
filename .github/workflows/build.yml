@@ -88,11 +88,10 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: package-lock.json
+          cache-dependency-path: aegisops_app/package-lock.json
 
-      - name: Install dependencies (root workspace)
+      - name: Install dependencies
         run: npm ci
-        working-directory: .
 
       - name: Run tests
         run: npm test
