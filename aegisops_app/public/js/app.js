@@ -194,7 +194,7 @@ async function renderPage(page) {
     switch (page) {
       case 'dashboard': await renderDashboard(container); break;
       case 'connectors': await renderConnectors(container); break;
-      case 'scenarios': await renderScenarios(container); break;
+      case 'scenarios': await window.renderPlanningPage(container); break; // merged into Планирование
       case 'schedules': await window.renderPlanningPage(container); break; // merged into Планирование
       case 'modules': await renderModules(container); break;
       case 'ai-engine': await renderAIEngine(container); break;

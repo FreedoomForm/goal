@@ -1,12 +1,7 @@
 /**
- * AegisOps WorkflowCanvas v3 — Ground-up rewrite.
+ * AegisOps WorkflowCanvas v4 — Neo-brutalism style.
  *
- * Anti-blur measures for Windows Electron:
- *   - All coordinates are Math.round()'d before applying as CSS left/top/transform
- *   - SVG paths use rounded coordinates
- *   - No CSS filter, no backdrop-filter, no alpha compositing tricks
- *   - transform: translate() values are always integers
- *   - Canvas host size is set via JS with explicit pixel values
+ * All coordinates Math.round()'d before applying as CSS.
  */
 (function () {
   'use strict';
@@ -43,12 +38,12 @@
     _buildDOM() {
       this.host.innerHTML = '';
 
-      // Toolbar
+      // Toolbar - neo-brutalism style
       this._toolbar = this._el('div', 'wf-canvas-toolbar');
       this._toolbar.innerHTML =
-        btn('🎯 Центр', 'fit') + btn('➕', 'zoom-in') + btn('➖', 'zoom-out') +
+        btn('🎯', 'fit') + btn('➕', 'zoom-in') + btn('➖', 'zoom-out') +
         btn('🗑️', 'clear') +
-        (this.onRunPreview ? '<button class="wf-tb-btn wf-tb-primary" data-act="run">▶ Запустить</button>' : '') +
+        (this.onRunPreview ? '<button class="wf-tb-btn wf-tb-primary" data-act="run">▶ ЗАПУСТИТЬ</button>' : '') +
         '<span class="wf-tb-zoom"></span>';
       this.host.appendChild(this._toolbar);
 
@@ -62,19 +57,20 @@
       svg.setAttribute('width', '100%');
       svg.setAttribute('height', '100%');
       this._svg = svg;
-      // Arrow marker
+      
+      // Arrow marker - neo-brutalism
       const defs = document.createElementNS(SVG_NS, 'defs');
       const marker = document.createElementNS(SVG_NS, 'marker');
       marker.setAttribute('id', 'wf-arr');
       marker.setAttribute('viewBox', '0 0 10 10');
       marker.setAttribute('refX', '9');
       marker.setAttribute('refY', '5');
-      marker.setAttribute('markerWidth', '6');
-      marker.setAttribute('markerHeight', '6');
+      marker.setAttribute('markerWidth', '8');
+      marker.setAttribute('markerHeight', '8');
       marker.setAttribute('orient', 'auto-start-reverse');
       const arrowPath = document.createElementNS(SVG_NS, 'path');
       arrowPath.setAttribute('d', 'M0 0 L10 5 L0 10 z');
-      arrowPath.setAttribute('fill', '#3366cc');
+      arrowPath.setAttribute('fill', '#000');
       marker.appendChild(arrowPath);
       defs.appendChild(marker);
       svg.appendChild(defs);
@@ -86,10 +82,6 @@
       // Nodes layer
       this._nodesLayer = this._el('div', 'wf-nodes-layer');
       this._vp.appendChild(this._nodesLayer);
-
-      // Dot grid
-      const grid = this._el('div', 'wf-dot-grid');
-      this._vp.appendChild(grid);
 
       this._applyTransform();
     }
@@ -179,7 +171,7 @@
         const nd = this.nodes.get(this._drag.id);
         if (!nd) return;
         nd.x = Math.round((e.clientX - r.left - this._ox) / this._scale - this._drag.dx);
-        nd.y = Math.round((e.clientY - r.top  - this._oy) / this._scale - this._drag.dy);
+        nd.y = Math.round((e.clientX - r.top  - this._oy) / this._scale - this._drag.dy);
         nd.el.style.left = nd.x + 'px';
         nd.el.style.top  = nd.y + 'px';
         this._drawEdges();
@@ -223,6 +215,8 @@
       el.dataset.id = nid;
       el.style.left = Math.round(x) + 'px';
       el.style.top  = Math.round(y) + 'px';
+      
+      // Neo-brutalism node
       el.innerHTML =
         `<div class="wf-node-head">` +
           `<span class="wf-node-ico">${icon || '⚙️'}</span>` +
@@ -285,13 +279,13 @@
         x0 = Math.min(x0, n.x);
         y0 = Math.min(y0, n.y);
         x1 = Math.max(x1, n.x + NODE_W);
-        y1 = Math.max(y1, n.y + 60);
+        y1 = Math.max(y1, n.y + 70);
       }
-      const pad = 40;
+      const pad = 60;
       const r = this._vp.getBoundingClientRect();
       const w = x1 - x0 + pad * 2, h = y1 - y0 + pad * 2;
       this._scale = Math.min(r.width / w, r.height / h, 1.2);
-      this._scale = Math.max(0.2, this._scale);
+      this._scale = Math.max(0.3, this._scale);
       this._ox = Math.round((r.width  - w * this._scale) / 2 - x0 * this._scale + pad * this._scale);
       this._oy = Math.round((r.height - h * this._scale) / 2 - y0 * this._scale + pad * this._scale);
       this._applyTransform();
@@ -356,8 +350,9 @@
         const x2 = Math.round(b.x), y2 = Math.round(b.y + PORT_Y_OFF);
         const path = document.createElementNS(SVG_NS, 'path');
         path.setAttribute('d', this._curve(x1, y1, x2, y2));
-        path.setAttribute('stroke', '#3366cc');
-        path.setAttribute('stroke-width', '2');
+        // Neo-brutalism edge style
+        path.setAttribute('stroke', '#000');
+        path.setAttribute('stroke-width', '3');
         path.setAttribute('fill', 'none');
         path.setAttribute('marker-end', 'url(#wf-arr)');
         path.classList.add('wf-edge');
@@ -371,16 +366,16 @@
     }
 
     _curve(x1, y1, x2, y2) {
-      const dx = Math.max(40, Math.abs(x2 - x1) * 0.4);
+      const dx = Math.max(50, Math.abs(x2 - x1) * 0.5);
       return `M${x1} ${y1} C${x1+dx} ${y1}, ${x2-dx} ${y2}, ${x2} ${y2}`;
     }
 
     _makeTempPath() {
       const p = document.createElementNS(SVG_NS, 'path');
-      p.setAttribute('stroke', '#59a8ff');
-      p.setAttribute('stroke-width', '2');
+      p.setAttribute('stroke', '#ff6b6b');
+      p.setAttribute('stroke-width', '3');
       p.setAttribute('fill', 'none');
-      p.setAttribute('stroke-dasharray', '4 4');
+      p.setAttribute('stroke-dasharray', '8 4');
       this._edgesGroup.appendChild(p);
       return p;
     }
