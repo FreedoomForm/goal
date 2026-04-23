@@ -198,6 +198,7 @@ async function renderPage(page) {
       case 'schedules': await window.renderPlanningPage(container); break; // merged into Планирование
       case 'modules': await renderModules(container); break;
       case 'ai-engine': await renderAIEngine(container); break;
+      case 'ai-chat': await window.renderAIChatPage(container); break;
       case 'assistant': await renderAIEngine(container); break; // merged into AI Движок
       case 'documents': await renderDocuments(container); break;
       case 'training': await renderAIEngine(container); break; // merged into AI Движок
@@ -1784,6 +1785,29 @@ async function renderAudit(container, currentLimit = 100, currentFilter = '') {
       </div>
     </div>
 
+    <div class="card mb-24">
+      <div class="card-header">
+        <div>
+          <div class="card-title">📊 Сбор данных для обучения</div>
+          <div class="card-subtitle">Экспорт данных для ML моделей и анализа</div>
+        </div>
+      </div>
+      <div class="audit-dataset-buttons">
+        <button class="btn nb-btn nb-btn-primary" id="btnExportAuditDataset">
+          📥 Скачать dataset AI действий (.txt)
+        </button>
+        <button class="btn nb-btn nb-btn-ghost" id="btnExportMLDataset">
+          🧠 Скачать ML dataset (JSON)
+        </button>
+        <button class="btn nb-btn nb-btn-ghost" id="btnExportConnectorDataset">
+          🔌 Скачать dataset коннекторов (JSON)
+        </button>
+        <button class="btn nb-btn nb-btn-ghost" id="btnExportDemoDataset">
+          🎮 Скачать demo dataset (JSON)
+        </button>
+      </div>
+    </div>
+
     ${filtered.length === 0 ? `
       <div class="card">
         <p class="text-muted">Нет записей аудита${currentFilter ? ' с фильтром "' + escapeHtml(currentFilter) + '"' : ''}.</p>
@@ -1834,6 +1858,161 @@ async function renderAudit(container, currentLimit = 100, currentFilter = '') {
       renderAudit(container, currentLimit, e.target.value);
     }, 400);
   });
+
+  // Dataset export buttons
+  $('btnExportAuditDataset')?.addEventListener('click', async () => {
+    try {
+      const allLogs = await api('/api/audit?limit=10000');
+      const dataset = allLogs.map(l => {
+        let payload;
+        try { payload = JSON.parse(l.payload); } catch { payload = l.payload; }
+        return {
+          timestamp: l.created_at,
+          event_type: l.event_type,
+          payload
+        };
+      });
+      
+      const txtContent = dataset.map(d => 
+        `[${d.timestamp}] ${d.event_type}: ${JSON.stringify(d.payload)}`
+      ).join('\n');
+      
+      const blob = new Blob([txtContent], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `audit_dataset_${new Date().toISOString().split('T')[0]}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('Dataset скачан', 'success');
+    } catch (err) {
+      showToast('Ошибка экспорта: ' + err.message, 'error');
+    }
+  });
+
+  $('btnExportMLDataset')?.addEventListener('click', async () => {
+    try {
+      const response = await fetch('/api/demo/ml-dataset');
+      const data = await response.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ml_dataset_${new Date().toISOString().split('T')[0]}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('ML dataset скачан', 'success');
+    } catch (err) {
+      // Generate demo ML dataset
+      const mlDataset = generateDemoMLDataset();
+      const blob = new Blob([JSON.stringify(mlDataset, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ml_dataset_${new Date().toISOString().split('T')[0]}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('ML dataset (demo) скачан', 'success');
+    }
+  });
+
+  $('btnExportConnectorDataset')?.addEventListener('click', async () => {
+    try {
+      const response = await fetch('/api/demo/connector-dataset');
+      const data = await response.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `connector_dataset_${new Date().toISOString().split('T')[0]}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('Connector dataset скачан', 'success');
+    } catch (err) {
+      // Generate demo connector dataset
+      const connDataset = generateDemoConnectorDataset();
+      const blob = new Blob([JSON.stringify(connDataset, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `connector_dataset_${new Date().toISOString().split('T')[0]}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('Connector dataset (demo) скачан', 'success');
+    }
+  });
+
+  $('btnExportDemoDataset')?.addEventListener('click', async () => {
+    try {
+      const demoDataset = generateDemoDataset();
+      const blob = new Blob([JSON.stringify(demoDataset, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `demo_dataset_${new Date().toISOString().split('T')[0]}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('Demo dataset скачан', 'success');
+    } catch (err) {
+      showToast('Ошибка экспорта: ' + err.message, 'error');
+    }
+  });
+}
+
+// Demo dataset generators
+function generateDemoMLDataset() {
+  const days = 150;
+  const data = [];
+  const now = new Date();
+  
+  for (let i = days; i >= 0; i--) {
+    const date = new Date(now);
+    date.setDate(date.getDate() - i);
+    const seasonality = Math.sin((i / 365) * Math.PI * 2) * 0.3;
+    const trend = i * 0.001;
+    const noise = (Math.random() - 0.5) * 0.1;
+    
+    data.push({
+      date: date.toISOString().split('T')[0],
+      production: Math.round(50000 * (1 + seasonality + trend + noise)),
+      consumption: Math.round(45000 * (1 + seasonality + trend + noise * 1.2)),
+      balance: Math.round(5000 * (1 + seasonality)),
+      pressure_avg: Math.round((2.5 + seasonality * 0.2 + noise * 0.1) * 100) / 100,
+      temperature_avg: Math.round((15 + seasonality * 10 + noise * 2) * 10) / 10,
+      revenue: Math.round(500000000 * (1 + trend + seasonality * 0.5)),
+      label: seasonality > 0.1 ? 'high' : seasonality < -0.1 ? 'low' : 'normal'
+    });
+  }
+  return { metadata: { generated: new Date().toISOString(), records: data.length }, data };
+}
+
+function generateDemoConnectorDataset() {
+  return {
+    metadata: { generated: new Date().toISOString() },
+    connectors: {
+      onec: { endpoints: ['/$metadata', '/Catalog_Контрагенты', '/Document_Реализация'], sample_rate: '5min' },
+      sap: { endpoints: ['A_SalesOrder', 'A_PurchaseOrder', 'A_MaterialStock'], sample_rate: '15min' },
+      opcua: { nodes: ['ns=2;s=GRS1.Pressure', 'ns=2;s=GRS1.Temperature'], sample_rate: '1s' },
+      mqtt: { topics: ['gas/telemetry/#', 'gas/alerts/#'], sample_rate: 'realtime' },
+      askug: { endpoints: ['/nodes', '/readings/current', '/archive/hourly'], sample_rate: '1h' }
+    }
+  };
+}
+
+function generateDemoDataset() {
+  return {
+    metadata: {
+      generated: new Date().toISOString(),
+      plant_name: 'Газоперерабатывающий завод №3',
+      region: 'Ташкент, Узбекистан'
+    },
+    ml_training: generateDemoMLDataset(),
+    connector_configs: generateDemoConnectorDataset(),
+    sample_workflows: [
+      { name: 'Ежедневный отчёт', trigger: 'cron', schedule: '0 9 * * *' },
+      { name: 'Мониторинг SCADA', trigger: 'interval', interval: 60000 }
+    ]
+  };
 }
 
 /* ══════════════ SETTINGS PAGE ══════════════ */
