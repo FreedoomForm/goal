@@ -152,10 +152,13 @@
       </nav>
 
       <div class="sidebar-footer">
-        <button class="btn btn-primary sidebar-chat-btn" id="sidebarChatBtn" title="AI Чат">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-          <span>AI Чат</span>
-        </button>
+        <div class="demo-mode-toggle" id="demoModeToggle">
+          <label class="toggle-switch">
+            <input type="checkbox" id="demoModeCheckbox" />
+            <span class="toggle-slider"></span>
+          </label>
+          <span class="demo-label">🎮 Demo Mode</span>
+        </div>
         <div class="status-indicator" id="statusIndicator">
           <div class="status-dot"></div>
           <span>System Ready</span>
@@ -164,22 +167,32 @@
       </div>
     </aside>
 
-    <!-- Sidebar AI Chat Panel -->
-    <div class="sidebar-chat-panel" id="sidebarChatPanel">
-      <div class="sidebar-chat-header">
-        <h3>💬 AI Ассистент</h3>
-        <button class="sidebar-chat-close" id="sidebarChatClose">✕</button>
+    <!-- Demo Mode Panel -->
+    <div class="demo-mode-panel" id="demoModePanel" hidden>
+      <div class="demo-panel-header">
+        <h3>🎮 Demo Mode</h3>
+        <button class="demo-panel-close" id="demoPanelClose">✕</button>
       </div>
-      <div class="sidebar-chat-messages" id="sidebarChatMessages">
-        <div style="text-align:center;color:#5e6c88;padding:40px 0">Задайте вопрос AI</div>
-      </div>
-      <div class="sidebar-chat-input">
-        <input class="form-input" id="sidebarChatInput" placeholder="Введите сообщение..." />
-        <button class="btn btn-primary btn-sm" id="sidebarChatSend">➤</button>
+      <div class="demo-panel-body">
+        <div class="demo-status">
+          <span class="demo-status-dot"></span>
+          <span id="demoStatusText">PostgreSQL: Ожидание...</span>
+        </div>
+        <div class="demo-connectors">
+          <h4>📡 Коннекторы</h4>
+          <div id="demoConnectorsList"></div>
+        </div>
+        <div class="demo-actions">
+          <button class="btn btn-primary btn-sm" id="demoRunBtn">▶ Запустить симуляцию</button>
+          <button class="btn btn-sm" id="demoStopBtn">⏹ Остановить</button>
+        </div>
+        <div class="demo-scenario">
+          <h4>📋 Default Demo Scenario</h4>
+          <p>Сбор данных 5 месяцев → ML прогноз → XLSX отчёт</p>
+          <button class="btn btn-sm" id="demoRunScenarioBtn">Запустить сценарий</button>
+        </div>
       </div>
     </div>
-
-    <!-- Sidebar chat handlers are in app.js (no duplicate inline script) -->
 
     <!-- Main Content -->
     <main class="main" id="mainContent">

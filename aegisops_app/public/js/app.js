@@ -2148,6 +2148,149 @@ async function renderSettings(container) {
   });
 }
 
+/* ══════════════ DEMO MODE ══════════════ */
+const demoState = {
+  enabled: false,
+  interval: null,
+  connectors: [],
+};
+
+async function toggleDemoMode(enabled) {
+  demoState.enabled = enabled;
+  const panel = document.getElementById('demoModePanel');
+  const statusText = document.getElementById('demoStatusText');
+  const connectorsList = document.getElementById('demoConnectorsList');
+
+  if (enabled) {
+    // Show panel
+    if (panel) panel.hidden = false;
+
+    // Load connectors
+    try {
+      const connectors = await api('/api/connectors');
+      demoState.connectors = connectors;
+
+      if (connectorsList) {
+        connectorsList.innerHTML = connectors.map(c => `
+          <div class="demo-connector-item" data-id="${c.id}" data-type="${c.type}">
+            <span>${typeIcons[c.type] || '🔌'}</span>
+            <span>${escapeHtml(c.name)}</span>
+            <span class="status">ready</span>
+          </div>
+        `).join('');
+      }
+
+      if (statusText) statusText.textContent = 'PostgreSQL: Готов к запуску';
+
+      showToast('🎮 Demo Mode включен', 'success');
+    } catch (err) {
+      if (statusText) statusText.textContent = 'PostgreSQL: Ошибка загрузки';
+      showToast('Ошибка загрузки коннекторов', 'error');
+    }
+  } else {
+    // Hide panel
+    if (panel) panel.hidden = true;
+
+    // Stop simulation
+    if (demoState.interval) {
+      clearInterval(demoState.interval);
+      demoState.interval = null;
+    }
+
+    showToast('Demo Mode выключен', 'info');
+  }
+}
+
+async function startDemoSimulation() {
+  const statusText = document.getElementById('demoStatusText');
+  const connectorsList = document.getElementById('demoConnectorsList');
+
+  if (statusText) statusText.textContent = 'PostgreSQL: Запуск...';
+
+  try {
+    // Start PostgreSQL simulation
+    await api('/api/demo/start', { method: 'POST' });
+
+    if (statusText) statusText.textContent = 'PostgreSQL: Активен ✓';
+
+    // Start data simulation
+    let connectorIndex = 0;
+    demoState.interval = setInterval(async () => {
+      if (!demoState.enabled) return;
+
+      const connector = demoState.connectors[connectorIndex % demoState.connectors.length];
+      connectorIndex++;
+
+      // Simulate data from this connector
+      try {
+        await api('/api/demo/simulate', {
+          method: 'POST',
+          body: JSON.stringify({ connector_id: connector.id, type: connector.type })
+        });
+
+        // Update connector status in UI
+        const items = connectorsList?.querySelectorAll('.demo-connector-item');
+        items?.forEach(item => {
+          if (item.dataset.id == connector.id) {
+            item.classList.add('active');
+            item.querySelector('.status').textContent = 'streaming';
+            setTimeout(() => {
+              item.classList.remove('active');
+              item.querySelector('.status').textContent = 'ready';
+            }, 2000);
+          }
+        });
+      } catch (err) {
+        console.warn('Demo simulation error:', err);
+      }
+    }, 5000);
+
+    showToast('▶ Симуляция запущена', 'success');
+  } catch (err) {
+    if (statusText) statusText.textContent = 'PostgreSQL: Ошибка';
+    showToast('Ошибка запуска: ' + err.message, 'error');
+  }
+}
+
+function stopDemoSimulation() {
+  if (demoState.interval) {
+    clearInterval(demoState.interval);
+    demoState.interval = null;
+  }
+
+  const statusText = document.getElementById('demoStatusText');
+  if (statusText) statusText.textContent = 'PostgreSQL: Остановлен';
+
+  showToast('⏹ Симуляция остановлена', 'info');
+}
+
+async function runDemoScenario() {
+  showToast('▶ Запуск demo сценария...', 'info');
+
+  try {
+    // Run the default demo scenario
+    const result = await api('/api/demo/scenario', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Demo: 5 месяцев данных → прогноз → XLSX',
+        steps: [
+          { action: 'collect_data', period_months: 5 },
+          { action: 'ml_forecast', horizon_days: 30 },
+          { action: 'export_xlsx', include_historical: true, include_forecast: true }
+        ]
+      })
+    });
+
+    if (result.file_url) {
+      showToast('✅ Сценарий выполнен! Файл готов.', 'success');
+      // Show download link
+      window.open(result.file_url, '_blank');
+    }
+  } catch (err) {
+    showToast('Ошибка сценария: ' + err.message, 'error');
+  }
+}
+
 /* ══════════════ INIT ══════════════ */
 /* ══════════════ Splash/Loading — PERMANENTLY DISABLED ══════════════ */
 // The splash/loading overlays were causing the "blur screen" bug on Windows
@@ -2264,6 +2407,27 @@ window.addEventListener('DOMContentLoaded', () => {
     } catch {}
   })();
 
+  // Demo Mode toggle
+  const demoModeCheckbox = $('demoModeCheckbox');
+  if (demoModeCheckbox) {
+    demoModeCheckbox.addEventListener('change', (e) => {
+      toggleDemoMode(e.target.checked);
+    });
+  }
+
+  // Demo Mode panel buttons
+  $('demoPanelClose')?.addEventListener('click', () => {
+    const panel = $('demoModePanel');
+    if (panel) panel.hidden = true;
+    const checkbox = $('demoModeCheckbox');
+    if (checkbox) checkbox.checked = false;
+    demoState.enabled = false;
+  });
+
+  $('demoRunBtn')?.addEventListener('click', startDemoSimulation);
+  $('demoStopBtn')?.addEventListener('click', stopDemoSimulation);
+  $('demoRunScenarioBtn')?.addEventListener('click', runDemoScenario);
+
   // Load dashboard
   navigateTo('dashboard');
 });
@@ -2272,3 +2436,7 @@ window.addEventListener('DOMContentLoaded', () => {
 window.navigateTo = navigateTo;
 window.hideModal = hideModal;
 window.showToast = showToast;
+window.toggleDemoMode = toggleDemoMode;
+window.startDemoSimulation = startDemoSimulation;
+window.stopDemoSimulation = stopDemoSimulation;
+window.runDemoScenario = runDemoScenario;
