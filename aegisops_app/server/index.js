@@ -1405,6 +1405,225 @@ ${trainingData ? `# Training context\n# ${trainingData.split('\n').length} lines
   return app;
 }
 
+/* ────────── Seed Demo Connectors with Mock Data ────────── */
+async function seedDemoConnectors() {
+  const { getConnectorDemoData, generateGasPlantData } = require('./demo/demo-data');
+  const now = nowISO();
+  
+  // Demo connector definitions with mock data
+  const demoConnectors = [
+    {
+      name: '1C:Enterprise (Demo)',
+      type: 'one_c_odata',
+      base_url: 'http://demo-1c.local/odata/standard.odata',
+      auth_mode: 'basic',
+      auth_payload: { username: 'demo', password: 'demo' },
+      config: {
+        endpoints: [
+          { path: '/Catalog_Контрагенты', method: 'GET', description: 'Справочник контрагентов' },
+          { path: '/Document_РеализацияТоваров', method: 'GET', description: 'Документы реализации' },
+          { path: '/AccumulationRegister_Продажи', method: 'GET', description: 'Регистр продаж' }
+        ],
+        mock_data: getConnectorDemoData('onec')
+      },
+      enabled: false
+    },
+    {
+      name: 'SAP S/4HANA (Demo)',
+      type: 'sap_odata',
+      base_url: 'https://demo-sap.local/sap/opu/odata/sap/',
+      auth_mode: 'bearer',
+      auth_payload: { token: 'demo-token' },
+      config: {
+        endpoints: [
+          { path: 'API_SALES_ORDER_SRV/A_SalesOrder', method: 'GET', description: 'Заказы на продажу' },
+          { path: 'API_PURCHASEORDER_PROCESS_SRV/A_PurchaseOrder', method: 'GET', description: 'Заказы на закупку' },
+          { path: 'API_MATERIAL_STOCK_SRV/A_MaterialStock', method: 'GET', description: 'Складские запасы' }
+        ],
+        mock_data: getConnectorDemoData('sap')
+      },
+      enabled: false
+    },
+    {
+      name: 'SCADA / OPC UA (Demo)',
+      type: 'opc_ua',
+      base_url: 'opc.tcp://demo-scada.local:4840',
+      auth_mode: 'none',
+      auth_payload: {},
+      config: {
+        endpoints: [
+          { node_id: 'ns=2;s=GRS1.Pressure', description: 'Давление ГРС-1' },
+          { node_id: 'ns=2;s=GRS1.Temperature', description: 'Температура ГРС-1' },
+          { node_id: 'ns=2;s=GRS1.FlowRate', description: 'Расход ГРС-1' },
+          { node_id: 'ns=2;s=GRS2.Pressure', description: 'Давление ГРС-2' },
+          { node_id: 'ns=2;s=GRS3.Pressure', description: 'Давление ГРС-3' }
+        ],
+        nodes: ['ns=2;s=GRS1.Pressure', 'ns=2;s=GRS1.Temperature', 'ns=2;s=GRS1.FlowRate'],
+        mock_data: getConnectorDemoData('opcua')
+      },
+      enabled: false
+    },
+    {
+      name: 'АСКУГ / UGaz (Demo)',
+      type: 'askug',
+      base_url: 'https://demo-askug.local/api/v1',
+      auth_mode: 'token',
+      auth_payload: { token: 'demo-api-key' },
+      config: {
+        endpoints: [
+          { path: '/nodes', method: 'GET', description: 'Список узлов учета' },
+          { path: '/readings/current', method: 'GET', description: 'Текущие показания' },
+          { path: '/archive/hourly', method: 'GET', description: 'Почасовой архив' },
+          { path: '/refuels', method: 'GET', description: 'Заправки' }
+        ],
+        mock_data: getConnectorDemoData('askug')
+      },
+      enabled: false
+    },
+    {
+      name: 'MQTT IoT Gateway (Demo)',
+      type: 'mqtt',
+      base_url: 'mqtt://demo-mqtt.local:1883',
+      auth_mode: 'none',
+      auth_payload: {},
+      config: {
+        endpoints: [
+          { topic: 'gas/telemetry/grs1/#', description: 'Телеметрия ГРС-1' },
+          { topic: 'gas/telemetry/grs2/#', description: 'Телеметрия ГРС-2' },
+          { topic: 'gas/alerts/#', description: 'Алерты' },
+          { topic: 'gas/meters/#', description: 'Счетчики' }
+        ],
+        topics: ['gas/telemetry/grs1/pressure', 'gas/telemetry/grs1/temperature', 'gas/telemetry/grs1/flow'],
+        mock_data: getConnectorDemoData('mqtt')
+      },
+      enabled: false
+    },
+    {
+      name: 'Email SMTP (Demo)',
+      type: 'email',
+      base_url: 'smtp://demo-mail.local:587',
+      auth_mode: 'basic',
+      auth_payload: { username: 'demo@gasplant.uz', password: 'demo', host: 'demo-mail.local', port: 587 },
+      config: {
+        endpoints: [
+          { action: 'send', description: 'Отправка email' },
+          { action: 'send_report', description: 'Отправка отчета' }
+        ],
+        mock_data: getConnectorDemoData('email')
+      },
+      enabled: false
+    },
+    {
+      name: 'REST API (Demo)',
+      type: 'rest',
+      base_url: 'https://demo-api.local/api/v1',
+      auth_mode: 'bearer',
+      auth_payload: { token: 'demo-api-token' },
+      config: {
+        endpoints: [
+          { path: '/data', method: 'GET', description: 'Общие данные' },
+          { path: '/reports', method: 'GET', description: 'Отчеты' },
+          { path: '/analytics', method: 'POST', description: 'Аналитика' }
+        ],
+        mock_data: getConnectorDemoData('rest')
+      },
+      enabled: false
+    },
+    {
+      name: 'Ollama LLM (Demo)',
+      type: 'ollama',
+      base_url: 'http://localhost:11434',
+      auth_mode: 'none',
+      auth_payload: {},
+      config: {
+        endpoints: [
+          { path: '/api/generate', method: 'POST', description: 'Генерация текста' },
+          { path: '/api/chat', method: 'POST', description: 'Чат' },
+          { path: '/api/embeddings', method: 'POST', description: 'Эмбеддинги' },
+          { path: '/api/tags', method: 'GET', description: 'Список моделей' }
+        ],
+        models: ['qwen2.5:7b', 'llama3.2:3b', 'mistral:7b'],
+        mock_data: { models: ['qwen2.5:7b', 'llama3.2:3b'] }
+      },
+      enabled: true
+    }
+  ];
+  
+  // Seed each demo connector
+  for (const demo of demoConnectors) {
+    const exists = await queryOne('SELECT id FROM connectors WHERE name = ? LIMIT 1', [demo.name]);
+    if (!exists) {
+      const encryptedPayload = encryptCredentials(demo.auth_payload);
+      await runSQL(
+        `INSERT INTO connectors (name, type, base_url, auth_mode, auth_payload, encrypted_auth_payload, config, enabled, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [demo.name, demo.type, demo.base_url, demo.auth_mode, '{}', encryptedPayload, JSON.stringify(demo.config), demo.enabled ? 1 : 0, now, now]
+      );
+      log.info('server.demo_connector_seeded', { name: demo.name, type: demo.type });
+    }
+  }
+  
+  // Seed demo scenarios
+  await seedDemoScenarios();
+}
+
+/* ────────── Seed Demo Scenarios ────────── */
+async function seedDemoScenarios() {
+  const now = nowISO();
+  
+  const demoScenarios = [
+    {
+      name: 'Ежедневный отчет по газовому балансу',
+      category: 'operations',
+      cron_expr: '0 9 * * *',
+      connector_ids: [],  // Uses all enabled connectors
+      objective: 'Автоматический сбор данных из всех источников, анализ баланса газа, формирование PDF отчета',
+      delivery_channel: 'telegram',
+      enabled: false
+    },
+    {
+      name: 'Мониторинг давления ГРС',
+      category: 'monitoring',
+      cron_expr: '*/15 * * * *',
+      connector_ids: [],  // Will use SCADA connector
+      objective: 'Каждые 15 минут опрашивать SCADA, проверять давление в пределах нормы, отправлять алерты при отклонениях',
+      delivery_channel: 'telegram',
+      enabled: false
+    },
+    {
+      name: 'Прогноз потребления на 30 дней',
+      category: 'finance',
+      cron_expr: '0 8 * * 1',  // Every Monday at 8:00
+      connector_ids: [],
+      objective: 'Сбор исторических данных, ML прогноз потребления на 30 дней, XLSX отчет',
+      delivery_channel: 'none',
+      enabled: false
+    },
+    {
+      name: 'Сверка платежей',
+      category: 'finance',
+      cron_expr: '0 10 1 * *',  // 1st of every month at 10:00
+      connector_ids: [],
+      objective: 'Сверка данных 1C и SAP, выявление расхождений, отчет по дебиторской задолженности',
+      delivery_channel: 'email',
+      enabled: false
+    }
+  ];
+  
+  for (const scenario of demoScenarios) {
+    const exists = await queryOne('SELECT id FROM scenarios WHERE name = ? LIMIT 1', [scenario.name]);
+    if (!exists) {
+      await runSQL(
+        `INSERT INTO scenarios (name, category, cron_expr, connector_ids, objective, delivery_channel, config, enabled, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [scenario.name, scenario.category, scenario.cron_expr, JSON.stringify(scenario.connector_ids), 
+         scenario.objective, scenario.delivery_channel, '{}', scenario.enabled ? 1 : 0, now, now]
+      );
+      log.info('server.demo_scenario_seeded', { name: scenario.name });
+    }
+  }
+}
+
 /* ────────── Start server ────────── */
 async function startServer(port = 18090, { bind = '0.0.0.0', dataDir } = {}) {
   if (dataDir) {
@@ -1487,6 +1706,9 @@ async function startServer(port = 18090, { bind = '0.0.0.0', dataDir } = {}) {
       );
       log.info('server.connector_seeded', { type: 'telegram', note: 'disabled — configure bot token to enable' });
     }
+    
+    // Seed demo connectors with mock data configuration
+    await seedDemoConnectors();
   } catch (seedErr) {
     log.warn('server.connector_seed_error', { error: seedErr.message });
   }
