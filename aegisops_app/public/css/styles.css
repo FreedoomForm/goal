@@ -2022,3 +2022,92 @@ select:focus-visible {
     max-width: 400px;
   }
 }
+
+/* ══════════════════════════════════════════════════════════════
+   DEMO MODE BUTTON (Prominent sidebar button)
+   ══════════════════════════════════════════════════════════════ */
+.demo-mode-btn {
+  width: 100%;
+  padding: 12px 16px;
+  background: #0B0B0F;
+  color: #FFF8EB;
+  border: 3px solid #0B0B0F;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  box-shadow: 4px 4px 0 0 #ff6b6b;
+  cursor: pointer;
+  transition: all 0.12s cubic-bezier(.2,.9,.2,1);
+}
+
+.demo-mode-btn:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 6px 6px 0 0 #ff6b6b;
+  background: #ff6b6b;
+  color: #0B0B0F;
+}
+
+.demo-mode-btn:active {
+  transform: translate(1px, 1px);
+  box-shadow: 2px 2px 0 0 #ff6b6b;
+}
+
+.demo-mode-btn.active {
+  background: #4ADE80;
+  color: #0B0B0F;
+  box-shadow: 4px 4px 0 0 #0B0B0F;
+}
+
+.demo-mode-btn .demo-icon {
+  font-size: 18px;
+}
+
+.demo-mode-btn .demo-status {
+  padding: 2px 8px;
+  background: #ff6b6b;
+  color: #0B0B0F;
+  border: 2px solid #0B0B0F;
+  font-size: 10px;
+  font-weight: 900;
+  margin-left: auto;
+}
+
+.demo-mode-btn.active .demo-status {
+  background: #0B0B0F;
+  color: #4ADE80;
+}
+
+/* Hide the old sidebar chat panel - we now have AI Chat as a separate tab */
+.sidebar-chat-panel {
+  display: none !important;
+}
+
+.sidebar-chat-btn {
+  display: none !important;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   PLANNING ICONS (SVG icons matching main navigation)
+   ══════════════════════════════════════════════════════════════ */
+.wf-svg-icon {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.wf-svg-icon svg {
+  width: 100%;
+  height: 100%;
+  stroke: currentColor;
+  stroke-width: 2;
+  fill: none;
+}

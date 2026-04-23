@@ -2407,11 +2407,22 @@ window.addEventListener('DOMContentLoaded', () => {
     } catch {}
   })();
 
-  // Demo Mode toggle
-  const demoModeCheckbox = $('demoModeCheckbox');
-  if (demoModeCheckbox) {
-    demoModeCheckbox.addEventListener('change', (e) => {
-      toggleDemoMode(e.target.checked);
+  // Demo Mode Button (new prominent button)
+  const demoModeBtn = $('demoModeBtn');
+  if (demoModeBtn) {
+    demoModeBtn.addEventListener('click', () => {
+      demoState.enabled = !demoState.enabled;
+      toggleDemoMode(demoState.enabled);
+      
+      // Update button appearance
+      const statusEl = $('demoStatus');
+      if (demoState.enabled) {
+        demoModeBtn.classList.add('active');
+        if (statusEl) statusEl.textContent = 'ON';
+      } else {
+        demoModeBtn.classList.remove('active');
+        if (statusEl) statusEl.textContent = 'OFF';
+      }
     });
   }
 
@@ -2419,9 +2430,11 @@ window.addEventListener('DOMContentLoaded', () => {
   $('demoPanelClose')?.addEventListener('click', () => {
     const panel = $('demoModePanel');
     if (panel) panel.hidden = true;
-    const checkbox = $('demoModeCheckbox');
-    if (checkbox) checkbox.checked = false;
     demoState.enabled = false;
+    const demoModeBtn = $('demoModeBtn');
+    const statusEl = $('demoStatus');
+    if (demoModeBtn) demoModeBtn.classList.remove('active');
+    if (statusEl) statusEl.textContent = 'OFF';
   });
 
   $('demoRunBtn')?.addEventListener('click', startDemoSimulation);
