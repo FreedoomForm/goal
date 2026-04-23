@@ -543,8 +543,11 @@ async function renderConnectors(container) {
     </div>
 
     <div class="item-list" id="connectorsList">
-      ${connectors.map(c => `
-        <div class="card" style="padding:20px">
+      ${connectors.map(c => {
+        const config = c.config || {};
+        const endpoints = config.endpoints || [];
+        return `
+        <div class="card connector-card-expanded" style="padding:20px" data-id="${c.id}">
           <div class="flex items-center gap-16">
             <div class="connector-type-icon ${c.type}" style="width:48px;height:48px;font-size:22px">${typeIcons[c.type] || '🔌'}</div>
             <div class="item-info" style="flex:1">
@@ -555,20 +558,33 @@ async function renderConnectors(container) {
                 <span class="chip">auth: ${c.auth_mode}</span>
                 <span class="badge ${c.enabled ? 'badge-success' : 'badge-neutral'}">${c.enabled ? 'Включен' : 'Выключен'}</span>
               </div>
-              ${Object.keys(c.config || {}).length > 0 ? `
-                <div class="mt-8 text-sm text-muted">
-                  Конфиг: ${Object.entries(c.config).map(([k,v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`).join(', ')}
-                </div>
-              ` : ''}
             </div>
             <div class="item-actions">
               <button class="btn btn-sm test-connector" data-id="${c.id}">🔍 Тест</button>
-              <button class="btn btn-sm edit-connector" data-id="${c.id}" data-name="${escapeHtml(c.name)}" data-type="${c.type}" data-url="${escapeHtml(c.base_url || '')}" data-auth="${c.auth_mode}" data-enabled="${c.enabled ? 1 : 0}" data-auth-payload="${escapeHtml(JSON.stringify(c.auth_payload || {}))}">✎ Изменить</button>
+              <button class="btn btn-sm endpoints-connector" data-id="${c.id}" data-name="${escapeHtml(c.name)}" data-config="${escapeHtml(JSON.stringify(config))}">📋 Эндпоинты</button>
+              <button class="btn btn-sm edit-connector" data-id="${c.id}" data-name="${escapeHtml(c.name)}" data-type="${c.type}" data-url="${escapeHtml(c.base_url || '')}" data-auth="${c.auth_mode}" data-enabled="${c.enabled ? 1 : 0}" data-auth-payload="${escapeHtml(JSON.stringify(c.auth_payload || {}))}" data-config="${escapeHtml(JSON.stringify(config))}">✎ Изменить</button>
               <button class="btn btn-sm btn-danger del-connector" data-id="${c.id}">✕</button>
             </div>
           </div>
+          ${endpoints.length > 0 ? `
+            <div class="endpoints-section mt-16" style="border-top:2px dashed #0B0B0F;padding-top:12px">
+              <div class="flex items-center gap-8 mb-8">
+                <strong style="font-size:12px;text-transform:uppercase">📡 Эндпоинты (${endpoints.length})</strong>
+              </div>
+              <div class="endpoints-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:8px">
+                ${endpoints.slice(0, 4).map(ep => `
+                  <div class="endpoint-chip" style="padding:6px 10px;background:#f5f5f5;border:2px solid #0B0B0F;font-size:11px">
+                    <span class="endpoint-method" style="font-weight:700;color:#59a8ff">${ep.method || 'GET'}</span>
+                    <span class="endpoint-path" style="margin-left:6px">${escapeHtml(ep.path || ep.topic || ep.node_id || 'N/A')}</span>
+                    ${ep.description ? `<span style="display:block;font-size:10px;color:#666;margin-top:2px">${escapeHtml(ep.description)}</span>` : ''}
+                  </div>
+                `).join('')}
+                ${endpoints.length > 4 ? `<div class="endpoint-chip" style="padding:6px 10px;background:#ffd93d;border:2px solid #0B0B0F;font-size:11px;font-weight:700">+${endpoints.length - 4} ещё...</div>` : ''}
+              </div>
+            </div>
+          ` : ''}
         </div>
-      `).join('')}
+      `}).join('')}
     </div>
   `;
 
@@ -759,6 +775,108 @@ async function renderConnectors(container) {
           });
           hideModal();
           showToast('Коннектор обновлен', 'success');
+          await renderConnectors(container);
+        } catch (err) {
+          showToast('Ошибка: ' + err.message, 'error');
+        }
+      });
+    });
+  });
+
+  // Endpoints management buttons
+  $$('.endpoints-connector').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.id;
+      const name = btn.dataset.name;
+      let config = {};
+      try { config = JSON.parse(btn.dataset.config || '{}'); } catch {}
+      const endpoints = config.endpoints || [];
+
+      showModal(`📋 Эндпоинты: ${name}`, `
+        <div class="endpoints-manager">
+          <p style="margin-bottom:12px;font-size:13px">Управление эндпоинтами коннектора. Добавляйте, редактируйте или удаляйте доступные методы API.</p>
+          <div class="endpoints-list" id="endpointsList" style="max-height:300px;overflow-y:auto">
+            ${endpoints.length === 0 ? '<p class="text-muted">Нет настроенных эндпоинтов</p>' : endpoints.map((ep, idx) => `
+              <div class="endpoint-item" style="display:flex;align-items:center;gap:8px;padding:8px;background:#f5f5f5;border:2px solid #0B0B0F;margin-bottom:6px">
+                <select class="endpoint-method" style="width:80px;padding:4px;border:2px solid #0B0B0F;font-weight:700" data-idx="${idx}">
+                  <option value="GET" ${ep.method === 'GET' ? 'selected' : ''}>GET</option>
+                  <option value="POST" ${ep.method === 'POST' ? 'selected' : ''}>POST</option>
+                  <option value="PUT" ${ep.method === 'PUT' ? 'selected' : ''}>PUT</option>
+                  <option value="DELETE" ${ep.method === 'DELETE' ? 'selected' : ''}>DELETE</option>
+                </select>
+                <input type="text" class="endpoint-path" value="${escapeHtml(ep.path || ep.topic || ep.node_id || '')}" placeholder="Path / Topic / Node ID" style="flex:1;padding:4px;border:2px solid #0B0B0F" data-idx="${idx}">
+                <input type="text" class="endpoint-desc" value="${escapeHtml(ep.description || '')}" placeholder="Описание" style="width:150px;padding:4px;border:2px solid #0B0B0F" data-idx="${idx}">
+                <button class="btn btn-sm btn-danger del-endpoint" data-idx="${idx}" style="padding:4px 8px">✕</button>
+              </div>
+            `).join('')}
+          </div>
+          <button class="btn btn-sm mt-12" id="btnAddEndpoint" style="width:100%">+ Добавить эндпоинт</button>
+        </div>
+      `, `
+        <button class="btn" onclick="hideModal()">Отмена</button>
+        <button class="btn btn-primary" id="btnSaveEndpoints">Сохранить эндпоинты</button>
+      `);
+
+      // Add new endpoint
+      $('btnAddEndpoint')?.addEventListener('click', () => {
+        const list = $('endpointsList');
+        const idx = list.querySelectorAll('.endpoint-item').length;
+        const newEndpoint = document.createElement('div');
+        newEndpoint.className = 'endpoint-item';
+        newEndpoint.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px;background:#f5f5f5;border:2px solid #0B0B0F;margin-bottom:6px';
+        newEndpoint.innerHTML = `
+          <select class="endpoint-method" style="width:80px;padding:4px;border:2px solid #0B0B0F;font-weight:700" data-idx="${idx}">
+            <option value="GET">GET</option>
+            <option value="POST">POST</option>
+            <option value="PUT">PUT</option>
+            <option value="DELETE">DELETE</option>
+          </select>
+          <input type="text" class="endpoint-path" placeholder="Path / Topic / Node ID" style="flex:1;padding:4px;border:2px solid #0B0B0F" data-idx="${idx}">
+          <input type="text" class="endpoint-desc" placeholder="Описание" style="width:150px;padding:4px;border:2px solid #0B0B0F" data-idx="${idx}">
+          <button class="btn btn-sm btn-danger del-endpoint" data-idx="${idx}" style="padding:4px 8px">✕</button>
+        `;
+        list.appendChild(newEndpoint);
+        
+        // Add delete handler
+        newEndpoint.querySelector('.del-endpoint').addEventListener('click', () => newEndpoint.remove());
+      });
+
+      // Delete endpoint handlers
+      $$('.del-endpoint').forEach(delBtn => {
+        delBtn.addEventListener('click', () => delBtn.closest('.endpoint-item').remove());
+      });
+
+      // Save endpoints
+      $('btnSaveEndpoints')?.addEventListener('click', async () => {
+        const newEndpoints = [];
+        document.querySelectorAll('.endpoint-item').forEach(item => {
+          const method = item.querySelector('.endpoint-method')?.value || 'GET';
+          const path = item.querySelector('.endpoint-path')?.value || '';
+          const description = item.querySelector('.endpoint-desc')?.value || '';
+          if (path) {
+            newEndpoints.push({ method, path, description });
+          }
+        });
+
+        try {
+          // Get current config and update endpoints
+          const connector = await api(`/api/connectors/${id}`);
+          const updatedConfig = { ...(connector.config || {}), endpoints: newEndpoints };
+          
+          await api(`/api/connectors/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify({
+              name: connector.name,
+              type: connector.type,
+              base_url: connector.base_url,
+              auth_mode: connector.auth_mode,
+              auth_payload: connector.auth_payload || {},
+              config: updatedConfig,
+              enabled: connector.enabled,
+            }),
+          });
+          hideModal();
+          showToast('Эндпоинты сохранены', 'success');
           await renderConnectors(container);
         } catch (err) {
           showToast('Ошибка: ' + err.message, 'error');
