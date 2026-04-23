@@ -252,6 +252,10 @@ async function createApp() {
   app.use('/api/mcp', authMiddleware({ required: true }), mcpRoutes);
   app.use('/api/modules', moduleRoutes);
   app.use('/api/ai', aiEngineRoutes);
+  
+  // Demo2 JSON API Routes (for LLM training)
+  const demo2Routes = require('./routes/demo2');
+  app.use('/api/demo2', demo2Routes);
 
   // Tunnel management
   app.get('/api/tunnel/status', authMiddleware({ required: true }), async (req, res) => {
@@ -1071,7 +1075,7 @@ async function createApp() {
   // AI chat endpoint for mobile (non-streaming, returns full response)
   app.post('/api/chat', async (req, res) => {
     try {
-      const { prompt, model, provider, thread_id } = req.body || {};
+      const { prompt, model, provider, thread_id, scenario } = req.body || {};
       if (!prompt?.trim()) return res.status(400).json({ error: 'prompt required' });
 
       // Save user message to history if thread_id provided
@@ -1080,6 +1084,56 @@ async function createApp() {
         'INSERT INTO chat_history (thread_id, role, content, model, provider, created_at) VALUES (?, ?, ?, ?, ?, ?)',
         [tid, 'user', prompt, model || '', provider || '', nowISO()]
       );
+
+      // Demo2 scenario: use JSON API only (no ML connectors)
+      if (scenario === 'demo2') {
+        const { executeApiCommand } = require('./demo/demo2-setup');
+        const { parseMessageForCommand, formatApiResponse, generateHelpResponse } = require('./routes/demo2');
+        
+        // Try to parse command from message
+        const parsedCommand = parseMessageForCommand(prompt);
+        let apiResult = null;
+        let responseText = '';
+        
+        if (parsedCommand) {
+          // Check for PostgreSQL connection
+          if (isPostgreSQL()) {
+            const pg = require('pg');
+            const pool = new pg.Pool({
+              host: process.env.PG_HOST || 'localhost',
+              port: parseInt(process.env.PG_PORT || '5432'),
+              database: process.env.PG_DATABASE || 'aegisops',
+              user: process.env.PG_USER || 'aegisops',
+              password: process.env.PG_PASSWORD || 'aegisops',
+            });
+            apiResult = await executeApiCommand(parsedCommand.command, parsedCommand.params, pool);
+            await pool.end();
+          } else {
+            // Use in-memory fallback
+            const { executeCommandMemory } = require('./routes/demo2');
+            apiResult = await executeCommandMemory(parsedCommand.command, parsedCommand.params);
+          }
+          responseText = formatApiResponse(parsedCommand.command, apiResult);
+        } else {
+          responseText = generateHelpResponse(prompt);
+        }
+        
+        // Save AI response to history
+        await runSQL(
+          'INSERT INTO chat_history (thread_id, role, content, model, provider, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+          [tid, 'ai', responseText, 'demo2-api', 'json-api', nowISO()]
+        );
+        
+        logEvent('chat.demo2', { thread_id: tid, prompt: prompt.slice(0, 200), command: parsedCommand?.command });
+        return res.json({ 
+          response: responseText, 
+          thread_id: tid, 
+          provider: 'demo2-json-api', 
+          model: 'demo2',
+          api_command: parsedCommand?.command,
+          api_result: apiResult
+        });
+      }
 
       if (model) ollamaManager.setModel(model, provider);
       const result = await askAI(prompt);

@@ -1926,6 +1926,32 @@ async function renderAudit(container, currentLimit = 100, currentFilter = '') {
       </div>
     </div>
 
+    <div class="card mb-24">
+      <div class="card-header">
+        <div>
+          <div class="card-title">🎯 Demo2: JSON API Training Dataset</div>
+          <div class="card-subtitle">Данные для обучения LLM работе с JSON API форматом (без ML коннекторов)</div>
+        </div>
+      </div>
+      <div class="audit-dataset-buttons">
+        <button class="btn nb-btn nb-btn-primary" id="btnExportDemo2ChatLogs">
+          📥 Скачать чат-логи Demo2 (JSON)
+        </button>
+        <button class="btn nb-btn nb-btn-ghost" id="btnExportDemo2Dataset">
+          📊 Скачать полный dataset Demo2 (JSON)
+        </button>
+        <button class="btn nb-btn nb-btn-ghost" id="btnInitDemo2">
+          🚀 Инициализировать Demo2
+        </button>
+        <button class="btn nb-btn nb-btn-ghost" id="btnExportDemo2JSONL">
+          📄 Экспорт в JSONL (для ML)
+        </button>
+      </div>
+      <div id="demo2Status" class="mt-16" style="padding:12px;background:#09101d;border-radius:8px;font-size:13px">
+        <span class="text-muted">Загрузка статуса Demo2...</span>
+      </div>
+    </div>
+
     ${filtered.length === 0 ? `
       <div class="card">
         <p class="text-muted">Нет записей аудита${currentFilter ? ' с фильтром "' + escapeHtml(currentFilter) + '"' : ''}.</p>
@@ -2075,6 +2101,103 @@ async function renderAudit(container, currentLimit = 100, currentFilter = '') {
       showToast('Ошибка экспорта: ' + err.message, 'error');
     }
   });
+
+  // Demo2 status check
+  loadDemo2Status();
+
+  // Demo2: Initialize
+  $('btnInitDemo2')?.addEventListener('click', async () => {
+    try {
+      showToast('Инициализация Demo2...', 'info');
+      const response = await api('/api/demo2/init', { method: 'POST' });
+      showToast(`Demo2 инициализирован: ${response.message}`, 'success');
+      loadDemo2Status();
+    } catch (err) {
+      showToast('Ошибка инициализации: ' + err.message, 'error');
+    }
+  });
+
+  // Demo2: Export chat logs for training
+  $('btnExportDemo2ChatLogs')?.addEventListener('click', async () => {
+    try {
+      showToast('Загрузка чат-логов Demo2...', 'info');
+      const response = await fetch('/api/demo2/chat-logs/export');
+      const data = await response.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `demo2_chat_training_${new Date().toISOString().split('T')[0]}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast(`Чат-логи скачаны: ${data.total_threads} тредов, ${data.total_messages} сообщений`, 'success');
+    } catch (err) {
+      showToast('Ошибка экспорта чат-логов: ' + err.message, 'error');
+    }
+  });
+
+  // Demo2: Export full dataset
+  $('btnExportDemo2Dataset')?.addEventListener('click', async () => {
+    try {
+      showToast('Загрузка dataset Demo2...', 'info');
+      const response = await fetch('/api/demo2/dataset');
+      const data = await response.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `demo2_full_dataset_${new Date().toISOString().split('T')[0]}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('Dataset Demo2 скачан', 'success');
+    } catch (err) {
+      showToast('Ошибка экспорта dataset: ' + err.message, 'error');
+    }
+  });
+
+  // Demo2: Export as JSONL for ML
+  $('btnExportDemo2JSONL')?.addEventListener('click', async () => {
+    try {
+      showToast('Экспорт в JSONL формат...', 'info');
+      const response = await fetch('/api/demo2/dataset?format=jsonl');
+      const text = await response.text();
+      const blob = new Blob([text], { type: 'application/x-ndjson' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `demo2_dataset_${new Date().toISOString().split('T')[0]}.jsonl`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('JSONL dataset скачан', 'success');
+    } catch (err) {
+      showToast('Ошибка экспорта JSONL: ' + err.message, 'error');
+    }
+  });
+}
+
+// Load Demo2 status
+async function loadDemo2Status() {
+  const statusEl = $('demo2Status');
+  if (!statusEl) return;
+  
+  try {
+    const status = await api('/api/demo2/status');
+    const pgStatus = status.postgresql ? '✅ PostgreSQL' : '⚠️ In-memory';
+    statusEl.innerHTML = `
+      <div style="display:flex;gap:24px;flex-wrap:wrap">
+        <div><strong>Статус:</strong> <span class="${status.status === 'active' ? 'text-success' : 'text-muted'}">${status.status}</span></div>
+        <div><strong>Режим:</strong> ${pgStatus}</div>
+        <div><strong>Таблиц:</strong> ${status.tables_exist ? '7' : '0'}</div>
+        <div><strong>Записей:</strong> ${status.row_count || 0}</div>
+        <div><strong>Команд API:</strong> ${status.available_commands?.length || 10}</div>
+      </div>
+      <div class="mt-8 text-muted" style="font-size:12px">
+        Доступные команды: ${status.available_commands?.join(', ') || 'get_forecast, get_weather, get_consumption, ...'}
+      </div>
+    `;
+  } catch (err) {
+    statusEl.innerHTML = `<span class="text-muted">❌ Ошибка загрузки статуса: ${err.message}</span>`;
+  }
 }
 
 // Demo dataset generators

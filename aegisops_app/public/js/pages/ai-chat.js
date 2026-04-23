@@ -56,6 +56,10 @@
             <p>Задавайте вопросы, создавайте отчёты, анализируйте данные</p>
           </div>
           <div class="ai-chat-actions">
+            <select id="aiScenarioSelect" class="nb-select" style="margin-right: 8px;">
+              <option value="">🔧 Обычный режим (с ML коннекторами)</option>
+              <option value="demo2">🎯 Demo2: JSON API Training</option>
+            </select>
             <button class="btn nb-btn nb-btn-ghost" id="aiScheduleBtn">📅 Запланировать</button>
             <button class="btn nb-btn nb-btn-ghost" id="aiHistoryBtn">📜 История</button>
             <button class="btn nb-btn nb-btn-primary" id="aiNewChatBtn">+ Новый чат</button>
@@ -105,7 +109,7 @@
                 </div>
               </div>
               <div class="ai-input-hints">
-                <span>💡 Попробуйте: "Дай данные за последние 5 месяцев в Excel" или "Создай прогноз на 14 дней"</span>
+                <span id="aiInputHint">💡 Попробуйте: "Дай данные за последние 5 месяцев в Excel" или "Создай прогноз на 14 дней"</span>
               </div>
             </div>
           </main>
@@ -247,6 +251,16 @@
     const message = input?.value?.trim();
     if (!message || isLoading) return;
 
+    // Get selected scenario
+    const scenarioSelect = document.getElementById('aiScenarioSelect');
+    const scenario = scenarioSelect?.value || '';
+    
+    // Update hint text based on scenario
+    const hintEl = document.getElementById('aiInputHint');
+    if (scenario === 'demo2' && hintEl) {
+      hintEl.textContent = '🎯 Demo2 режим: Используйте команды API (get_forecast, get_weather, etc.) или спросите на естественном языке';
+    }
+
     input.value = '';
     chatHistory.push({ role: 'user', content: message });
     renderMessages();
@@ -256,13 +270,20 @@
     if (sendBtn) sendBtn.textContent = '⏳ Думаю...';
 
     try {
+      const requestBody = {
+        message,
+        thread_id: currentThreadId,
+        history: chatHistory.slice(0, -1)
+      };
+      
+      // Add scenario for demo2 mode
+      if (scenario) {
+        requestBody.scenario = scenario;
+      }
+      
       const response = await api('/api/chat', {
         method: 'POST',
-        body: JSON.stringify({
-          message,
-          thread_id: currentThreadId,
-          history: chatHistory.slice(0, -1)
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       chatHistory.push({ role: 'assistant', content: response.response || response.message || 'Ответ получен' });
